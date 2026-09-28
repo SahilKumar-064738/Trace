@@ -1,0 +1,82 @@
+detection:
+  model: yolov8n.pt      # pretrained COCO weights — no fine-tuning for MVP
+  confidence: 0.6        # threshold chosen after comparing 0.4 / 0.5 / 0.6 in Colab
+  classes: [0]           # COCO class 0 = person only
+
+cameras:
+  C01:
+    start_time: "10:02:00"   # real-world wall-clock time when this clip started recording
+  C02:
+    start_time: "10:05:00"
+  C03:
+    start_time: "10:08:00"
+
+reid:
+  crops_per_track: 5         # number of frames sampled per track for Re-ID embedding
+  min_crop_width: 40         # skip crops narrower than this (pixels) — Phase 3.5 raised from 30
+  min_crop_height: 100       # skip crops shorter than this (pixels) — Phase 3.5 raised from 60
+  quality:
+    reject_severe_edge_truncation: true   # reject crops where person is severely cut off at frame edge
+    edge_margin_pixels: 5                 # bbox must be within this many pixels of frame boundary to trigger truncation check
+  embedding:
+    storage_format: "json"   # MVP format — consistent with Phase 1–3 JSON-first pipeline
+    model: "osnet_x1_0"      # pretrained OSNet x1_0 weights from torchreid
+    embedding_dim: 512        # experimentally confirmed in Phase 4.1 (Google Colab, Tesla T4)
+                              # NOTE: this is documentation/validation info only.
+                              # The Phase 4.3 generator will determine output dim programmatically
+                              # and validate it against this value — do not hardcode 512 in model inference.
+    batch_size: 32            # crops per forward pass — override with --batch-size CLI flag
+  solider:
+    model: "swin_small"        # SOLIDER-REID Swin-Small backbone (TransReID-style)
+    embedding_dim: 768         # Swin-Small last-stage output: embed_dims=96 × 2³ = 768
+                               # Determined programmatically at runtime via dummy forward pass —
+                               # this value is used for config validation only, not hardcoded inference.
+    weights: ""                # Path to .pth checkpoint — supply at runtime via --weights CLI flag
+                               # Use the fine-tuned SOLIDER-REID checkpoint (Market-1501 or MSMT17)
+                               # OR the converted SOLIDER backbone (solider_swin_small_tea.pth).
+    solider_config: ""         # Path to SOLIDER-REID yaml config — supply via --solider-config
+                               # e.g. SOLIDER-REID/configs/market/swin_small.yml
+    batch_size: 32             # Crops per GPU forward pass — override with --batch-size CLI flag
+                               # Swin-Small is heavier than OSNet; reduce to 16 if OOM on <8 GB GPU.
+
+  kpr:
+    model: "kpr_swin_small"    # KPR Swin-Small backbone (ECCV 2024)
+    holistic_dim: 512          # holistic embedding dimension (probed from kpr_occ_pt weights)
+    num_parts: 8               # probed from kpr_occ_pt weights via embed_kpr.py
+    part_dim: 512              # per-part embedding dimension (probed)
+    vis_threshold: 0.3         # minimum per-part visibility score to include in similarity
+    weights: ""                # path to .pth.tar checkpoint
+                               # download: https://drive.google.com/file/d/1Np5wu3nQa_Fl_z7Zw2kchJNC8JZVwsh5/view
+    kpr_config: ""             # path to KPR yaml config file, e.g.
+                               # configs/kpr/imagenet/kpr_occ_posetrack_test.yaml
+    batch_size: 16             # KPR is heavier than OSNet — reduce to 8 if OOM on <8 GB GPU
+
+  search:
+    no_match_similarity_threshold: 0.74  # MVP threshold for Phase 5.7 no-match handling
+                                        # Updated from 0.70 after Phase 5.7 real-world test showed
+                                        # unknown person (sim=0.7267) incorrectly accepted at 0.70.
+                                        # 0.74 is evidence-based on this small validation set only:
+                                        #   - Rejects tested unknown: 0.7267 < 0.74 ✓
+                                        #   - Retains Track 13 original: 0.8148 >= 0.74 ✓
+                                        #   - Retains Track 13 rotated:  0.7974 >= 0.74 ✓
+                                        #   - Retains Track 16 original: 0.8878 >= 0.74 ✓
+                                        # Corresponds to ~63.7 scaled confidence score.
+                                        # NOT a calibrated probability or universally valid Re-ID threshold.
+                                        # If best candidate similarity < threshold, return no_confident_match.
+
+face:
+  detector: "scrfd_10g"         # SCRFD 10G — high-accuracy face detector
+  recogniser: "arcface_r50"     # ArcFace ResNet-50 — 512-dim face embedding
+  det_threshold: 0.5            # SCRFD minimum detection confidence
+  min_face_size: 20             # minimum face bounding-box dimension in pixels
+  embedding_dim: 512            # ArcFace ResNet-50 output dimension
+  weights:
+    det: ""                     # fill in path to det_10g.onnx
+                                # download: https://huggingface.co/yakhyo/scrfd/resolve/main/det_10g.onnx
+    rec: ""                     # fill in path to w600k_r50.onnx
+                                # download: https://huggingface.co/yakhyo/arcface/resolve/main/w600k_r50.onnx
+  fusion:
+    body_weight: 0.70           # weight for body (OSNet) similarity when fusing with face
+    face_weight: 0.30           # weight for face (ArcFace) similarity
+    min_face_coverage: 0.30     # minimum fraction of track crops with detected face
+                                # to trust the face signal; below this, face_weight=0
