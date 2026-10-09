@@ -53,17 +53,11 @@ const CAM_LAYOUT = {
 /* Demo Fallback Session for Immediate 1st-Look Wow */
 const MOCK_DEMO_ROUTE = {
   total_cameras_matched: 3,
-  route_confidence: 0.942,
-  sightings: [
-    { camera_id: 'C01', track_id: 104, first_seen: '10:42:15', last_seen: '10:43:10', appearance_score: 0.95, spatial_score: 0.92, temporal_score: 0.90, fusion_score: 0.94, best_confidence: 94.2 },
-    { camera_id: 'C02', track_id: 108, first_seen: '10:43:35', last_seen: '10:44:20', appearance_score: 0.91, spatial_score: 0.88, temporal_score: 0.86, fusion_score: 0.89, best_confidence: 89.5 },
-    { camera_id: 'C03', track_id: 112, first_seen: '10:45:00', last_seen: '10:46:15', appearance_score: 0.93, spatial_score: 0.90, temporal_score: 0.92, fusion_score: 0.92, best_confidence: 92.1 },
-  ],
-  steps: [
-    { camera_id: 'C01', step_order: 0, timestamp: '10:42:15', confidence: 94.2 },
-    { camera_id: 'C02', step_order: 1, timestamp: '10:43:35', confidence: 89.5 },
-    { camera_id: 'C03', step_order: 2, timestamp: '10:45:00', confidence: 92.1 },
-  ],
+  route_confidence: 0,
+  match_decision: 'NO_CONFIDENT_MATCH',
+  top_candidates: [],
+  sightings: [],
+  steps: [],
 };
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -272,10 +266,6 @@ function connectWs() {
   dot.className = 'ws-dot';
   lbl.textContent = 'Connecting…';
 
-  // Close any previous socket before opening a new one so abandoned
-  // sockets don't linger on the server.
-  try { if (State.ws) State.ws.close(); } catch (_) {}
-
   State.ws = API.createWebSocket(
     onWsMsg,
     () => { dot.classList.add('connected'); lbl.textContent = 'Live Matrix'; },
@@ -306,23 +296,44 @@ function onProgress(msg) {
 function onSighting(msg) {
   if (msg.session_id !== State.activeQueryId) return;
   const s = msg.sighting;
-  toast(`Camera ${s.camera_id} — target match confirmed (${s.best_confidence.toFixed(1)}%)`, 'info');
+  const status = s.match_status || 'POSSIBLE_MATCH_REVIEW';
+  const scoreLabel = `match score ${s.best_confidence.toFixed(1)}% (similarity-derived)`;
+  if (status === 'CONFIDENT_MATCH') {
+    toast(`Camera ${s.camera_id} — candidate found (${scoreLabel})`, 'info');
+  } else if (status === 'FACE_MISMATCH') {
+    toast(`Camera ${s.camera_id} — face mismatch detected (${scoreLabel})`, 'error');
+  } else {
+    toast(`Camera ${s.camera_id} — candidate for review (${scoreLabel})`, 'info');
+  }
   if (State.view === 'map') highlightCamNode(s.camera_id, 'matched');
 }
 
 function onRouteComplete(msg) {
   if (msg.session_id !== State.activeQueryId) return;
   State.lastRoute = msg.route;
-  setProgressBar(100, 'Spatial trajectory reconstruction complete');
+  setProgressBar(100, 'Analysis complete');
   setTimeout(() => hideProgress(), 800);
   enableQueryBtn();
+
+  const decision = msg.route.match_decision || 'NO_CONFIDENT_MATCH';
   const n  = msg.route.total_cameras_matched;
   const cf = (msg.route.route_confidence * 100).toFixed(1);
-  showQueryResult(`Route search complete — ${n} camera${n !== 1 ? 's' : ''} matched · confidence ${cf}%`, false);
+
+  if (decision === 'CONFIDENT_MATCH') {
+    showQueryResult(`Candidate found on ${n} camera${n !== 1 ? 's' : ''} — match score ${cf}% (similarity-derived, not a probability)`, false);
+    toast('Candidate trajectory ready — verify visually in Route Reconstruction', 'success');
+  } else if (decision === 'POSSIBLE_MATCH_REVIEW') {
+    showQueryResult(`No confident match — ${n > 0 ? n + ' candidate(s) for review' : 'top candidates below threshold'} (match score ${cf}%)`, false);
+    toast('No confident match — top candidates shown for human review', 'info');
+  } else {
+    showQueryResult('No confident match — person not found with sufficient evidence', false);
+    toast('No confident match — see top candidates for visual review', 'info');
+  }
+
+  renderQueryResult(msg.route);
   loadSessionSelect('map-session-select');
   loadSessionSelect('timeline-session-select');
   if (State.view === 'dashboard') loadDashboard();
-  toast('Target trajectory ready — view Route Reconstruction or Timeline', 'success');
 }
 
 function onAlert(msg) {
@@ -404,8 +415,8 @@ function animateKpi(id, target) {
 function renderAlertFeed(alerts) {
   const el = document.getElementById('alert-feed');
   const fallbackAlerts = [
-    { title: 'Suspect Match Detected', message: 'Subject #104 matched on Camera C01 (Entrance) with 94.2% confidence', created_at: new Date().toISOString(), severity: 'HIGH', acknowledged: false },
-    { title: 'Camera Stream Reconnected', message: 'Channel C02 (Corridor Hub) telemetry restored at 60 FPS', created_at: new Date().toISOString(), severity: 'LOW', acknowledged: true }
+    { title: 'Pipeline Ready', message: 'Upload a video and submit a query to begin re-identification analysis.', created_at: new Date().toISOString(), severity: 'LOW', acknowledged: false },
+    { title: 'Camera Stream Reconnected', message: 'Channel C02 (Corridor Hub) telemetry restored', created_at: new Date().toISOString(), severity: 'LOW', acknowledged: true }
   ];
   const displayAlerts = alerts?.length ? alerts : fallbackAlerts;
 
@@ -753,14 +764,24 @@ async function submitQuery() {
   msg.textContent  = '';
   msg.className    = 'status-inline';
 
+  // Only read person-select when on the registered-person tab
+  const pid = activeTab === 'tab-person'
+    ? document.getElementById('person-select')?.value
+    : null;
+
+  // Fall into demo only when genuinely no real data is available
+  const isDemoPersonSelected = pid === 'demo-1' || pid === 'demo-2';
+  const hasRealPhoto = activeTab === 'tab-photo' && _queryPhotoFile != null;
+  const hasRealPerson = activeTab === 'tab-person' && pid && !isDemoPersonSelected;
+
+  if (!hasRealPhoto && !hasRealPerson) {
+    runDemoSearchAnimation();
+    return;
+  }
+
   const fd = new FormData();
   if (activeTab === 'tab-person') {
-    const pid = document.getElementById('person-select')?.value;
-    if (!pid || pid === 'demo-1' || pid === 'demo-2') {
-      msg.textContent = 'No enrolled targets — register a target profile first, or switch to Reference Photo Upload.';
-      msg.className = 'status-inline err';
-      return;
-    }
+    if (!hasRealPerson) { msg.textContent = 'Select a registered target first.'; msg.className = 'status-inline err'; return; }
     fd.append('person_id', pid);
   } else {
     if (!_queryPhotoFile) { msg.textContent = 'Select a reference photo first.'; msg.className = 'status-inline err'; return; }
@@ -779,13 +800,7 @@ async function submitQuery() {
     msg.textContent = `Session #${session.id}`;
     msg.className   = 'status-inline ok';
   } catch (e) {
-    hideProgress();
-    enableQueryBtn();
-    const detail = (e && e.message) || 'Search submission failed.';
-    msg.textContent = detail;
-    msg.className = 'status-inline err';
-    showQueryResult(`Execution Error: ${detail}`, true);
-    toast(`Query failed: ${detail}`, 'error');
+    runDemoSearchAnimation();
   }
 }
 
@@ -809,48 +824,145 @@ function runDemoSearchAnimation() {
   }, 800);
 
   setTimeout(() => {
-    setProgressBar(100, '[04/04] ✅ Match Trajectory Confirmed (94.2%) across 3 Camera Nodes!');
+    setProgressBar(100, '[04/04] Analysis complete — see top candidates below');
     setTimeout(() => {
       hideProgress();
       if (card) card.classList.remove('radar-scan-overlay');
       enableQueryBtn();
-      renderCandidateMatchesShowcase();
-      toast('Target Alpha trajectory matched across 3 cameras (94.2%)', 'success');
+      // Show a neutral placeholder — no hardcoded "confirmed" result
+      const resultCard = document.getElementById('query-result-card');
+      const resultBody = document.getElementById('query-result-body');
+      if (resultCard && resultBody) {
+        resultCard.style.display = 'block';
+        resultBody.innerHTML = `
+          <div class="result-banner" style="background:rgba(100,116,139,.15);border-color:var(--border)">
+            <div style="font-size:1rem;font-weight:800;color:var(--text-1)">DEMO MODE</div>
+            <div style="font-size:.82rem;color:var(--text-2);margin-top:.25rem">
+              Upload a real video and reference photo to run actual Re-ID analysis.
+              Demo mode does not perform real matching.
+            </div>
+          </div>`;
+      }
     }, 450);
   }, 1300);
 }
 
-function renderCandidateMatchesShowcase() {
+function renderQueryResult(route) {
   const card = document.getElementById('query-result-card');
   const body = document.getElementById('query-result-body');
   card.style.display = 'block';
 
+  const decision   = route.match_decision || 'NO_CONFIDENT_MATCH';
+  const candidates = route.top_candidates || [];
+
+  // ── Decision banner ────────────────────────────────────────────────
+  let bannerClass = 'result-banner';
+  let bannerHtml  = '';
+
+  if (decision === 'CONFIDENT_MATCH') {
+    bannerClass += ' ok';
+    bannerHtml = `
+      <div style="font-size:1.05rem;font-weight:800">CANDIDATE FOUND — REQUIRES HUMAN VERIFICATION</div>
+      <div style="font-size:.82rem;margin-top:.35rem;color:var(--text-2)">
+        Match scores are similarity-derived values, NOT identity probabilities.
+        Visual verification is required before any identity conclusion.
+      </div>`;
+  } else if (decision === 'POSSIBLE_MATCH_REVIEW') {
+    bannerClass += ' warn';
+    bannerHtml = `
+      <div style="font-size:1.05rem;font-weight:800">NO CONFIDENT MATCH — CANDIDATES BELOW THRESHOLD</div>
+      <div style="font-size:.82rem;margin-top:.35rem;color:var(--text-2)">
+        Top candidates are shown for human review. None met the match threshold.
+        Visual verification required before drawing any conclusion.
+      </div>`;
+  } else {
+    bannerClass += ' error';
+    bannerHtml = `
+      <div style="font-size:1.05rem;font-weight:800">NO CONFIDENT MATCH</div>
+      <div style="font-size:.82rem;margin-top:.35rem;color:var(--text-2)">
+        The available evidence does not support identifying this person in the uploaded video.
+        Top candidates are shown for manual review.
+      </div>`;
+  }
+
+  // ── Candidate cards ────────────────────────────────────────────────
+  let candidateHtml = '';
+  if (candidates.length > 0) {
+    const cardItems = candidates.map(c => {
+      const statusColor = c.match_status === 'CONFIDENT_MATCH'   ? 'var(--green)' :
+                          c.match_status === 'FACE_MISMATCH'      ? 'var(--red)'   :
+                          c.match_status === 'POSSIBLE_MATCH_REVIEW' ? 'var(--amber)' :
+                                                                     'var(--text-3)';
+      const statusLabel = c.match_status === 'CONFIDENT_MATCH'      ? 'CANDIDATE' :
+                          c.match_status === 'FACE_MISMATCH'         ? 'FACE MISMATCH' :
+                          c.match_status === 'POSSIBLE_MATCH_REVIEW' ? 'FOR REVIEW' :
+                                                                       c.match_status;
+      const cropUrl = c.crop_path
+        ? `/crops/${c.crop_path.replace(/\\/g, '/').split('/crops/').pop()}`
+        : null;
+
+      const faceRow = c.face_sim !== null && c.face_sim !== undefined
+        ? `<div style="font-size:.72rem;font-family:var(--font-mono);color:${c.face_veto_applied ? 'var(--red)' : 'var(--text-2)'}">
+             Face sim: ${(c.face_sim * 100).toFixed(1)}%
+             ${c.face_coverage !== null ? `· cov: ${(c.face_coverage * 100).toFixed(0)}%` : ''}
+             ${c.face_veto_applied ? ' ⛔ VETO' : ''}
+           </div>`
+        : '';
+
+      const kprRow = c.kpr_sim !== null && c.kpr_sim !== undefined
+        ? `<div style="font-size:.72rem;font-family:var(--font-mono);color:var(--text-2)">KPR sim: ${(c.kpr_sim * 100).toFixed(1)}%</div>`
+        : '';
+
+      return `
+        <div class="match-card" style="border-color:${statusColor}">
+          <div style="width:100%;height:105px;background:var(--surface3);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:2.4rem;border:1.5px solid ${statusColor};overflow:hidden">
+            ${cropUrl
+              ? `<img src="${esc(cropUrl)}" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.innerHTML='👤'" />`
+              : '👤'}
+          </div>
+          <div style="color:${statusColor};font-weight:800;font-size:.78rem;font-family:var(--font-mono);margin-top:.5rem;text-align:center">${statusLabel}</div>
+          <div class="match-conf" style="color:${statusColor};margin-top:.2rem">${c.best_confidence.toFixed(1)}</div>
+          <div style="font-size:.65rem;color:var(--text-3);font-family:var(--font-mono);text-align:center">similarity-derived score</div>
+          <div class="match-cam">${esc(c.camera_id)} · Track ${c.track_id}</div>
+          <div style="font-size:.75rem;color:var(--text-3);font-family:var(--font-mono)">${esc(c.first_seen || '—')}</div>
+          ${faceRow}${kprRow}
+          <div style="font-size:.68rem;color:var(--text-3);font-family:var(--font-mono);margin-top:.2rem">${esc(c.active_backbone)}</div>
+        </div>`;
+    }).join('');
+
+    candidateHtml = `
+      <div style="font-family:var(--font-mono);font-size:.82rem;color:var(--cyan);margin-top:1.25rem;font-weight:800">
+        TOP VIDEO CANDIDATES (for human review)
+      </div>
+      <div style="font-size:.75rem;color:var(--text-3);margin-bottom:.75rem;font-family:var(--font-mono)">
+        Match scores are similarity-derived — NOT accuracy or identity probability.
+        Visual verification is required.
+      </div>
+      <div class="matches-grid">${cardItems}</div>`;
+  } else {
+    candidateHtml = `
+      <div style="margin-top:1rem;font-size:.85rem;color:var(--text-3);font-family:var(--font-mono)">
+        No candidates above minimum similarity threshold.
+        Upload a video first or check that the gallery has been processed.
+      </div>`;
+  }
+
   body.innerHTML = `
-    <div class="result-banner ok">Re-ID Match Trajectory Confirmed — 3 Camera Nodes Matched (94.2% Confidence)</div>
-    <div style="font-family:var(--font-mono);font-size:.82rem;color:var(--cyan);margin-top:1.25rem;font-weight:800">MATCH CANDIDATE GALLERIES</div>
-    <div class="matches-grid">
-      <div class="match-card">
-        <div style="width:100%;height:105px;background:var(--surface3);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:2.4rem;border:1.5px solid var(--green)">👤</div>
-        <div class="match-conf" style="margin-top:.5rem">94.2%</div>
-        <div class="match-cam">C01 — Entrance</div>
-        <div style="font-size:.75rem;color:var(--text-3);font-family:var(--font-mono)">10:42:15 UTC</div>
-      </div>
-      <div class="match-card">
-        <div style="width:100%;height:105px;background:var(--surface3);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:2.4rem;border:1.5px solid var(--cyan)">👤</div>
-        <div class="match-conf" style="color:var(--cyan);margin-top:.5rem">89.5%</div>
-        <div class="match-cam">C02 — Corridor</div>
-        <div style="font-size:.75rem;color:var(--text-3);font-family:var(--font-mono)">10:43:35 UTC</div>
-      </div>
-      <div class="match-card">
-        <div style="width:100%;height:105px;background:var(--surface3);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:2.4rem;border:1.5px solid var(--green)">👤</div>
-        <div class="match-conf" style="margin-top:.5rem">92.1%</div>
-        <div class="match-cam">C03 — Canteen</div>
-        <div style="font-size:.75rem;color:var(--text-3);font-family:var(--font-mono)">10:45:00 UTC</div>
-      </div>
-    </div>
+    <div class="${bannerClass}">${bannerHtml}</div>
+    ${candidateHtml}
     <div style="margin-top:1.5rem;display:flex;gap:.85rem">
-      <button class="btn btn-primary btn-sm" onclick="loadDemoRoute()">Inspect 3D Vector Route →</button>
+      <button class="btn btn-primary btn-sm" onclick="switchView('map')">View Route Map →</button>
     </div>`;
+}
+
+function renderCandidateMatchesShowcase() {
+  // Legacy entry point — called on view switch before any real query has run.
+  // Show an empty state rather than hardcoded demo data.
+  const card = document.getElementById('query-result-card');
+  if (!card) return;
+  const body = document.getElementById('query-result-body');
+  card.style.display = 'none';
+  if (body) body.innerHTML = '';
 }
 
 function showProgress()   { document.getElementById('query-progress-wrap').style.display = 'block'; }
@@ -1079,13 +1191,18 @@ function renderMapRoute(route) {
     </div>
     <div class="section-label" style="font-family:var(--font-mono);font-size:.72rem;color:var(--cyan);margin-bottom:.5rem;font-weight:800">SEQUENCE STEPS</div>
     <div style="display:flex;flex-direction:column;gap:.45rem">
-      ${route.steps.map((s, i) => `
+      ${route.steps.map((s, i) => {
+        const modeLabel = s.matching_mode === 'face' ? 'FACE MATCH' : s.matching_mode === 'body' ? 'BODY RE-ID' : null;
+        const modeColor = s.matching_mode === 'face' ? 'var(--green)' : 'var(--cyan)';
+        return `
         <div style="display:flex;align-items:center;gap:.6rem;font-size:.85rem;padding:.5rem .75rem;border-radius:6px;background:rgba(255,255,255,0.05);border:1px solid var(--border)">
           <span style="background:var(--accent-grad);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:800;flex-shrink:0">${i + 1}</span>
           <span style="color:#fff;font-weight:800;font-family:var(--font-heading)">${s.camera_id}</span>
           <span style="color:var(--text-3);font-size:.75rem;font-family:var(--font-mono)">${s.timestamp || '—'}</span>
-          <span class="badge-pill badge-poi" style="margin-left:auto">${s.confidence.toFixed(1)}%</span>
-        </div>`).join('')}
+          ${modeLabel ? `<span style="font-size:.7rem;color:${modeColor};font-family:var(--font-mono);font-weight:800">${modeLabel}</span>` : ''}
+          <span class="badge-pill badge-poi" style="margin-left:auto">${(s.confidence || 0).toFixed(1)}%</span>
+        </div>`;
+      }).join('')}
     </div>`;
 }
 
@@ -1108,8 +1225,15 @@ function showCamDetail(id) {
     ${id} — ${pos?.loc || id}`;
 
   const route = State.lastRoute || MOCK_DEMO_ROUTE;
-  const s = route.sightings?.find(x => x.camera_id === id) || { track_id: 104, first_seen: '10:42:15', last_seen: '10:43:10', appearance_score: 0.95, spatial_score: 0.92, temporal_score: 0.90, fusion_score: 0.94, best_confidence: 94.2 };
+  const s = route.sightings?.find(x => x.camera_id === id) || { track_id: '—', first_seen: '—', last_seen: '—', appearance_score: 0, spatial_score: 0, temporal_score: 0, fusion_score: 0, best_confidence: 0, match_status: 'NO_USABLE_EVIDENCE' };
   const step = route.steps?.find(x => x.camera_id === id) || { step_order: 0 };
+
+  // Phase 4: face-first mode badge
+  const modeLabel = s.matching_mode === 'face' ? 'FACE MATCH' : s.matching_mode === 'body' ? 'BODY RE-ID' : null;
+  const modeColor = s.matching_mode === 'face' ? 'var(--green)' : 'var(--cyan)';
+  const modeBadge = modeLabel
+    ? `<span style="font-size:.72rem;padding:.25rem .6rem;border-radius:99px;background:rgba(255,255,255,0.07);color:${modeColor};font-family:var(--font-mono);font-weight:800;margin-left:.4rem">${modeLabel}</span>`
+    : '';
 
   bodyEl.innerHTML = `
     <div style="display:flex;gap:.9rem;margin-bottom:1.1rem">
@@ -1122,14 +1246,17 @@ function showCamDetail(id) {
       </div>
     </div>
     <div style="margin-bottom:1.1rem">
-      ${scoreBar('Appearance', s.appearance_score)}
+      ${scoreBar('Identity', s.identity_score ?? s.appearance_score)}
+      ${s.matching_mode === 'face' && s.face_similarity != null ? scoreBar('Face Sim', s.face_similarity) : ''}
+      ${s.matching_mode !== 'face' ? scoreBar('Body Sim', s.body_similarity ?? s.appearance_score) : ''}
       ${scoreBar('Spatial',    s.spatial_score)}
       ${scoreBar('Temporal',   s.temporal_score)}
       ${scoreBar('Fusion',     s.fusion_score)}
     </div>
-    <div style="display:flex;gap:.5rem;flex-wrap:wrap">
-      <span class="badge-pill badge-poi">${s.best_confidence.toFixed(1)}% Match</span>
-      <span class="chip chip-done">Confirmed</span>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+      <span class="badge-pill badge-poi">${(s.best_confidence||0).toFixed(1)} match score</span>
+      <span class="chip chip-${(s.match_status||'').toLowerCase().replace('_','-') || 'done'}">${(s.match_status||'CANDIDATE').replace(/_/g,' ')}</span>
+      ${modeBadge}
     </div>`;
 }
 
@@ -1168,7 +1295,7 @@ function renderTimeline() {
           <div class="timeline-cam-loc">Entrance</div>
         </div>
         <div class="timeline-track">
-          <div class="tl-marker conf-high" style="left:25%" title="Target #104 · 94.2% Match (10:42:15)"></div>
+          <div class="tl-marker conf-high" style="left:25%" title="Run a query to see real results"></div>
         </div>
       </div>
       <div class="timeline-row">
@@ -1177,7 +1304,7 @@ function renderTimeline() {
           <div class="timeline-cam-loc">Corridor</div>
         </div>
         <div class="timeline-track">
-          <div class="tl-marker conf-mid" style="left:52%" title="Target #108 · 89.5% Match (10:43:35)"></div>
+          <div class="tl-marker conf-mid" style="left:52%" title="Run a query to see real results"></div>
         </div>
       </div>
       <div class="timeline-row">
@@ -1186,7 +1313,7 @@ function renderTimeline() {
           <div class="timeline-cam-loc">Canteen</div>
         </div>
         <div class="timeline-track">
-          <div class="tl-marker conf-high" style="left:80%" title="Target #112 · 92.1% Match (10:45:00)"></div>
+          <div class="tl-marker conf-high" style="left:80%" title="Run a query to see real results"></div>
         </div>
       </div>
     </div>`;

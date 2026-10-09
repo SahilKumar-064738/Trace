@@ -131,6 +131,11 @@ class QuerySession(Base):
     )
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Overall identity decision written by pipeline on completion
+    # CONFIDENT_MATCH | POSSIBLE_MATCH_REVIEW | NO_CONFIDENT_MATCH
+    match_decision: Mapped[str] = mapped_column(
+        Text, nullable=False, default="NO_CONFIDENT_MATCH"
+    )
 
     # Relationships
     person: Mapped[Optional["Person"]] = relationship(
@@ -178,7 +183,7 @@ class Sighting(Base):
     track_id: Mapped[int] = mapped_column(Integer, nullable=False)
     first_seen: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # HH:MM:SS.ff
     last_seen: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # Confidence values derived from OSNet similarity
+    # Confidence values derived from body similarity
     best_confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     mean_confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     # Best crop image path for thumbnail display
@@ -191,6 +196,33 @@ class Sighting(Base):
     temporal_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     # Weighted fusion of above three signals
     fusion_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Identity decision: CONFIDENT_MATCH | POSSIBLE_MATCH_REVIEW |
+    #                    FACE_MISMATCH | NO_CONFIDENT_MATCH | NO_USABLE_EVIDENCE
+    match_status: Mapped[str] = mapped_column(
+        Text, nullable=False, default="POSSIBLE_MATCH_REVIEW"
+    )
+    # Face veto details (populated when match_status = FACE_MISMATCH)
+    face_veto_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    face_veto_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Optional signals for debugging / display
+    face_sim: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    face_coverage: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    kpr_sim: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    fused_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    active_backbone: Mapped[str] = mapped_column(Text, nullable=False, default="OSNet x1_0")
+    embedding_dim: Mapped[int] = mapped_column(Integer, nullable=False, default=512)
+
+    # ---- Phase 4: face-first identity fields ----------------------------
+    # "face" when ArcFace was the sole identity signal; "body" for Re-ID fallback
+    matching_mode: Mapped[str] = mapped_column(Text, nullable=False, default="body")
+    # True when face mode was used for this sighting
+    face_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # ArcFace cosine similarity against the track centroid (None = no face)
+    face_similarity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # OSNet / SOLIDER body cosine similarity (always populated)
+    body_similarity: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # The selected identity score: face_similarity OR body_similarity, never blended
+    identity_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     # Relationships
     session: Mapped["QuerySession"] = relationship(

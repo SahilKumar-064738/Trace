@@ -16,15 +16,15 @@ Trace is an AI-powered surveillance system that tracks a specific person across 
 
 ## AI Models Used
 
-| Model              | Purpose                               | Dim |
-| ------------------ | ------------------------------------- | --- |
-| YOLOv8n            | Detect people in video frames         | —   |
-| ByteTrack          | Track person IDs within a camera      | —   |
-| OSNet x1_0         | Body appearance embedding             | 512 |
-| SOLIDER Swin-Small | Cloth-change robust body embedding    | 768 |
-| SCRFD 10G          | Face detection in crops               | —   |
-| ArcFace ResNet-50  | Face identity embedding               | 512 |
-| KPR Swin-Small     | Part-based body embedding (ECCV 2024) | 768 |
+| Model | Purpose | Dim |
+|---|---|---|
+| YOLOv8n | Detect people in video frames | — |
+| ByteTrack | Track person IDs within a camera | — |
+| OSNet x1_0 | Body appearance embedding | 512 |
+| SOLIDER Swin-Small | Cloth-change robust body embedding | 768 |
+| SCRFD 10G | Face detection in crops | — |
+| ArcFace ResNet-50 | Face identity embedding | 512 |
+| KPR Swin-Small | Part-based body embedding (ECCV 2024) | 768 |
 
 ---
 
@@ -142,29 +142,24 @@ pip install -r backend/requirements.txt
 
 > ⚠️ **macOS (Apple Silicon M1/M2/M3):** PyTorch runs on CPU by default. It works correctly but has no CUDA GPU support (Apple uses MPS, not CUDA). All models will run on CPU. KPR will be slow — use Google Colab for KPR embedding generation.
 > If you see a `torch` version conflict, install PyTorch for Apple Silicon first:
->
 > ```bash
 > pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 > pip install -r backend/requirements.txt
 > ```
 
 > ⚠️ **macOS — `libGL` error with OpenCV:** If you see `ImportError: dlopen ... libGL`, install the headless variant:
->
 > ```bash
 > pip uninstall opencv-python
 > pip install opencv-python-headless==4.9.0.80
 > ```
 
 > ⚠️ **torchreid install issue?** If `torchreid` fails to install from PyPI, install it directly from source:
->
 > ```bash
 > pip install git+https://github.com/KaiyangZhou/deep-person-reid.git
 > ```
->
 > Then re-run `pip install -r backend/requirements.txt`
 
 > ⚠️ **Windows + OpenCV error?** If you see a DLL error with `opencv-python`, install the headless version instead:
->
 > ```bash
 > pip uninstall opencv-python
 > pip install opencv-python-headless==4.9.0.80
@@ -201,7 +196,6 @@ http://localhost:8000
 ```
 
 API docs available at:
-
 ```
 http://localhost:8000/api/docs
 ```
@@ -222,14 +216,12 @@ http://localhost:8000/api/docs
 ### Step 2 — Register or search for a person
 
 **Option A — Search with a photo directly:**
-
 1. Go to **Re-ID Search Query**
 2. Click "Reference Photo Upload" tab
 3. Upload any photo of the person you want to find
 4. Click "Execute Re-ID Search"
 
 **Option B — Register a person first (watchlist):**
-
 1. Go to **Watchlist & Persons**
 2. Click "Register Target Profile"
 3. Fill in name, set watchlist status (suspect/poi/missing)
@@ -239,7 +231,6 @@ http://localhost:8000/api/docs
 ### Step 3 — View results
 
 Results appear in real-time:
-
 - **Route Reconstruction** — animated map showing which cameras they appeared on and when
 - **Sighting Timeline** — horizontal timeline view per camera
 - **Dashboard** — confidence scores, match thumbnails, alerts
@@ -264,7 +255,6 @@ curl -L -o weights/w600k_r50.onnx https://huggingface.co/yakhyo/arcface/resolve/
 ```
 
 Or download manually from:
-
 - SCRFD: https://huggingface.co/yakhyo/scrfd/resolve/main/det_10g.onnx
 - ArcFace: https://huggingface.co/yakhyo/arcface/resolve/main/w600k_r50.onnx
 
@@ -309,7 +299,6 @@ cd ..
 ```
 
 > ⚠️ **macOS:** If `python setup.py develop` fails, try:
->
 > ```bash
 > pip install -e .
 > ```
@@ -317,13 +306,11 @@ cd ..
 ### Step 3 — Download KPR pretrained weights
 
 Download from Google Drive:
-
 ```
 https://drive.google.com/file/d/1Np5wu3nQa_Fl_z7Zw2kchJNC8JZVwsh5/view
 ```
 
 Save as:
-
 ```
 pretrained_models/kpr_occ_pt_IN_82.34_92.33_42323828.pth.tar
 ```
@@ -395,7 +382,6 @@ python ai_pipeline/reid/embed_solider.py \
 ```
 
 Update `.env`:
-
 ```env
 SOLIDER_WEIGHTS=pretrained_models/SOLIDER_REID_swin_small.pth
 SOLIDER_CONFIG_PATH=SOLIDER-REID/configs/market/swin_small.yml
@@ -446,13 +432,13 @@ DETECTION_CONFIDENCE=0.6
 
 The system supports 5 cameras by default (C01–C05). MVP cameras (C01, C02, C03) are active by default.
 
-| ID  | Location              | Status             |
-| --- | --------------------- | ------------------ |
-| C01 | Main Door             | MVP (active)       |
-| C02 | Main Corridor         | MVP (active)       |
-| C03 | Canteen / Common Area | MVP (active)       |
+| ID | Location | Status |
+|---|---|---|
+| C01 | Main Door | MVP (active) |
+| C02 | Main Corridor | MVP (active) |
+| C03 | Canteen / Common Area | MVP (active) |
 | C04 | Stairwell / 2nd Floor | Stretch (disabled) |
-| C05 | Outdoor Courtyard     | Stretch (disabled) |
+| C05 | Outdoor Courtyard | Stretch (disabled) |
 
 Camera connections and transit times are defined in `dataset/camera_graph.json`.
 
@@ -460,11 +446,11 @@ Camera connections and transit times are defined in `dataset/camera_graph.json`.
 
 ## Processing Times (35-second video)
 
-| Mode              | CPU (Intel/AMD) | Apple Silicon (M1/M2) | GPU (NVIDIA CUDA) |
-| ----------------- | --------------- | --------------------- | ----------------- |
-| Body only (OSNet) | 6–11 min        | 3–5 min               | 1–2 min           |
-| Body + Face       | 7–13 min        | 4–7 min               | 1.5–2.5 min       |
-| Body + Face + KPR | 14–26 min       | 8–14 min              | 2–4 min           |
+| Mode | CPU (Intel/AMD) | Apple Silicon (M1/M2) | GPU (NVIDIA CUDA) |
+|---|---|---|---|
+| Body only (OSNet) | 6–11 min | 3–5 min | 1–2 min |
+| Body + Face | 7–13 min | 4–7 min | 1.5–2.5 min |
+| Body + Face + KPR | 14–26 min | 8–14 min | 2–4 min |
 
 > KPR on CPU is slow regardless of platform. Use Google Colab (free T4 GPU) for KPR embedding generation if you don't have an NVIDIA GPU.
 > Apple Silicon has no CUDA support — MPS (Metal) is not used by this project. CPU times apply.
@@ -473,22 +459,22 @@ Camera connections and transit times are defined in `dataset/camera_graph.json`.
 
 ## API Endpoints
 
-| Method | Endpoint                      | Description                    |
-| ------ | ----------------------------- | ------------------------------ |
-| POST   | `/api/upload/video`           | Upload video, trigger pipeline |
-| GET    | `/api/upload/jobs`            | List all upload jobs + status  |
-| GET    | `/api/upload/status/{job_id}` | Poll single job status         |
-| POST   | `/api/queries`                | Submit a re-ID search query    |
-| GET    | `/api/queries/{id}`           | Poll query session status      |
-| GET    | `/api/queries/{id}/route`     | Get completed route result     |
-| GET    | `/api/cameras`                | List all cameras               |
-| PATCH  | `/api/cameras/{id}`           | Update camera location/config  |
-| GET    | `/api/persons`                | List registered persons        |
-| POST   | `/api/persons`                | Register a new person          |
-| POST   | `/api/persons/{id}/enroll`    | Enroll reference photo         |
-| GET    | `/api/analytics/dashboard`    | Dashboard stats                |
-| GET    | `/api/health`                 | Health check                   |
-| WS     | `/ws`                         | WebSocket for live events      |
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/upload/video` | Upload video, trigger pipeline |
+| GET | `/api/upload/jobs` | List all upload jobs + status |
+| GET | `/api/upload/status/{job_id}` | Poll single job status |
+| POST | `/api/queries` | Submit a re-ID search query |
+| GET | `/api/queries/{id}` | Poll query session status |
+| GET | `/api/queries/{id}/route` | Get completed route result |
+| GET | `/api/cameras` | List all cameras |
+| PATCH | `/api/cameras/{id}` | Update camera location/config |
+| GET | `/api/persons` | List registered persons |
+| POST | `/api/persons` | Register a new person |
+| POST | `/api/persons/{id}/enroll` | Enroll reference photo |
+| GET | `/api/analytics/dashboard` | Dashboard stats |
+| GET | `/api/health` | Health check |
+| WS | `/ws` | WebSocket for live events |
 
 Full interactive docs: `http://localhost:8000/api/docs`
 
@@ -498,16 +484,13 @@ Full interactive docs: `http://localhost:8000/api/docs`
 
 **`Tracking failed: Weights only load failed` (PyTorch 2.6)**
 PyTorch 2.6 changed `torch.load` defaults, breaking Ultralytics 8.2.x. Fix by upgrading Ultralytics:
-
 ```bash
 pip install "ultralytics>=8.3.0"
 ```
-
 Then retry the video upload. This is already fixed in `requirements.txt` — if you installed before this fix, run the upgrade manually.
 
 **`ModuleNotFoundError: No module named 'backend'`**
 You're running uvicorn from the wrong directory. Always run from the project root:
-
 ```bash
 cd Trace   # make sure you're here
 python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
@@ -515,40 +498,32 @@ python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
 
 **macOS — `zsh: command not found: python`**
 macOS ships with Python 2 or no Python. Use `python3` or install Python 3.11:
-
 ```bash
 brew install python@3.11
 python3.11 -m venv venv
 source venv/bin/activate
 ```
-
 After activating the venv, `python` and `pip` will point to 3.11 correctly.
 
 **macOS — `OSError: dlopen libgomp` or OpenMP error with torchreid**
 Install OpenMP via Homebrew:
-
 ```bash
 brew install libomp
 ```
-
 Then retry the pip install.
 
 **macOS — `SSL: CERTIFICATE_VERIFY_FAILED` when downloading OSNet weights**
 Run the Python certificate installer:
-
 ```bash
 /Applications/Python\ 3.11/Install\ Certificates.command
 ```
-
 Or:
-
 ```bash
 pip install certifi
 python -c "import ssl; ssl.create_default_context()"
 ```
 
 **`torchreid` not found**
-
 ```bash
 pip install torchreid
 # or
@@ -566,12 +541,10 @@ The KPR repo must be cloned and `python setup.py develop` must have been run ins
 
 **Database schema errors after pulling updates**
 If new columns were added to ORM models, delete the database and restart:
-
 ```bash
 del db\trace.db    # Windows
 rm db/trace.db     # macOS/Linux
 ```
-
 The database is recreated automatically on startup.
 
 **Video upload fails with `Invalid camera_id`**
@@ -632,69 +605,29 @@ Production-hardening pass over the full upload → query loop
 
 ## Tech Stack
 
-| Layer              | Technology                        |
-| ------------------ | --------------------------------- |
-| Person detection   | YOLOv8n (Ultralytics)             |
-| Tracking           | ByteTrack                         |
-| Body ReID          | OSNet x1_0 (torchreid)            |
-| Semantic body ReID | SOLIDER Swin-Small                |
-| Face detection     | SCRFD 10G (ONNX Runtime)          |
-| Face recognition   | ArcFace ResNet-50 (ONNX Runtime)  |
-| Part-based ReID    | KPR Swin-Small (ECCV 2024)        |
-| Backend framework  | FastAPI                           |
-| ORM                | SQLAlchemy 2.0 async              |
-| Database           | SQLite + aiosqlite                |
-| Data validation    | Pydantic v2                       |
-| Real-time          | WebSocket                         |
-| Deep learning      | PyTorch 2.x                       |
-| ONNX inference     | ONNX Runtime                      |
-| Frontend           | Vanilla JavaScript (no framework) |
-| Charts             | Chart.js                          |
-| Map                | SVG floor-plan                    |
-| Server             | Uvicorn                           |
+| Layer | Technology |
+|---|---|
+| Person detection | YOLOv8n (Ultralytics) |
+| Tracking | ByteTrack |
+| Body ReID | OSNet x1_0 (torchreid) |
+| Semantic body ReID | SOLIDER Swin-Small |
+| Face detection | SCRFD 10G (ONNX Runtime) |
+| Face recognition | ArcFace ResNet-50 (ONNX Runtime) |
+| Part-based ReID | KPR Swin-Small (ECCV 2024) |
+| Backend framework | FastAPI |
+| ORM | SQLAlchemy 2.0 async |
+| Database | SQLite + aiosqlite |
+| Data validation | Pydantic v2 |
+| Real-time | WebSocket |
+| Deep learning | PyTorch 2.x |
+| ONNX inference | ONNX Runtime |
+| Frontend | Vanilla JavaScript (no framework) |
+| Charts | Chart.js |
+| Map | SVG floor-plan |
+| Server | Uvicorn |
 
 ---
 
 ## License
 
 This project is for research and educational use.
-
-===============================================================================
-
-## 📚 Research Papers & Performance Comparison
-
-Trace is based on recent research in multi-camera tracking, person re-identification, camera selection, and keypoint-based Re-ID.
-
-| Research Paper                                                                                                                                                                                                                                                 | Year | Relevant Area                                |                                                                           Reported Performance |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---: | -------------------------------------------- | ---------------------------------------------------------------------------------------------: |
-| [Intelligent Camera Selection Decisions for Target Tracking in a Camera Network](https://openaccess.thecvf.com/content/WACV2022/html/Sharma_Intelligent_Camera_Selection_Decisions_for_Target_Tracking_in_a_Camera_WACV_2022_paper.html)                       | 2022 | Camera selection & cross-camera tracking     |                                                             **93.28% Top-1**, **96.27% Top-3** |
-| [Body Part-Based Representation Learning for Occluded Person Re-Identification (BPBreID)](https://arxiv.org/abs/2211.03679)                                                                                                                                    | 2023 | Part-based person Re-ID & occlusion handling |                                                  **82.9% Rank-1 / 75.2% mAP** on Occluded-ReID |
-| [MMPTRACK: Large-Scale Densely Annotated Multi-Camera Multiple People Tracking Benchmark](https://openaccess.thecvf.com/content/WACV2023/html/Han_MMPTRACK_Large-Scale_Densely_Annotated_Multi-Camera_Multiple_People_Tracking_Benchmark_WACV_2023_paper.html) | 2023 | Multi-camera multiple-person tracking        |                                                                Multi-camera tracking benchmark |
-| [ReidTrack: Reid-Only Multi-Target Multi-Camera Tracking](https://openaccess.thecvf.com/content/CVPR2023W/AICity/html/Specker_ReidTrack_Reid-Only_Multi-Target_Multi-Camera_Tracking_CVPRW_2023_paper.html)                                                    | 2023 | Re-ID based multi-camera tracking            |                                                 **4th place — 2023 AI City Challenge Track 1** |
-| [Keypoint Promptable Re-Identification (KPR)](https://www.ecva.net/papers/eccv_2024/papers_ECCV/html/10180_ECCV_2024_paper.php)                                                                                                                                | 2024 | Keypoint-guided & part-based Re-ID           | **84.31% Rank-1 / 75.11% mAP** on Occluded-Duke; **96.62% Rank-1 / 93.22% mAP** on Market-1501 |
-
-### 🏆 Current Trace Performance
-
-> **Trace currently achieves 99.8% accuracy on the evaluated Trace test dataset.**
-
-The current system combines multiple complementary components:
-
-- **YOLOv8n** — Person detection
-- **ByteTrack** — Single-camera multi-object tracking
-- **OSNet** — Body appearance-based person Re-ID
-- **KPR** — Keypoint/part-based person Re-ID
-- **SOLIDER** — Semantic body representation
-- **SCRFD + ArcFace** — Optional face detection and face Re-ID
-- **Spatial-Temporal Camera Graph** — Cross-camera route reconstruction
-
-### 📊 Performance Summary
-
-| System / Research                  |    Metric / Result |
-| ---------------------------------- | -----------------: |
-| Intelligent Camera Selection       |       93.28% Top-1 |
-| BPBreID — Occluded-ReID            |       82.9% Rank-1 |
-| KPR — Occluded-Duke                |      84.31% Rank-1 |
-| KPR — Market-1501                  |      96.62% Rank-1 |
-| **Trace — Current Implementation** | **99.8% Accuracy** |
-
-> **Evaluation note:** The **99.8%** result is the measured performance of the current Trace implementation on its evaluated test dataset. It uses a project-specific evaluation setup and therefore should not be interpreted as directly comparable to Rank-1, mAP, Top-1 camera-selection accuracy, or competition rankings

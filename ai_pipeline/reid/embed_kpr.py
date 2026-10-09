@@ -51,7 +51,7 @@ Step 4 — Locate the KPR config file
 -------------------------------------
   Use one of the provided configs, e.g.:
     configs/kpr/imagenet/kpr_occ_posetrack_test.yaml
-    configs/kpr/market1501/kpr_swin_small.yaml   (if testing on Market)
+    configs/kpr/imagenet/kpr_occ_posetrack_test.yaml  (recommended — matches downloaded weights)
 
   Pass the config path via --kpr-config.
 
