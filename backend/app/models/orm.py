@@ -95,6 +95,9 @@ class Camera(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     start_time: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # HH:MM:SS
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    google_place_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationships
     sightings: Mapped[list["Sighting"]] = relationship(
@@ -136,6 +139,12 @@ class QuerySession(Base):
     match_decision: Mapped[str] = mapped_column(
         Text, nullable=False, default="NO_CONFIDENT_MATCH"
     )
+    # Top candidate tracks serialised as JSON for retrieval via REST GET.
+    # Mirrors what is pushed live over WebSocket so clients that miss the
+    # WS event can still retrieve the candidates from the DB.
+    top_candidates_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Reconstructed route data with explanations serialised as JSON
+    route_data_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationships
     person: Mapped[Optional["Person"]] = relationship(
