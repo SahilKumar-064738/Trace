@@ -1,260 +1,73 @@
 /**
- * app.js — Trace Command Center SPA v5.2 (Ultra-Dense HUD Edition)
- * Cybernetic surveillance interface with HTML5 canvas video stream shaders,
- * live telemetry, Chart.js graphs, SVG floorplan matrix, WebSocket protocol,
- * and high-density pre-populated interactive HUD showcases.
+ * app.js — TRACE investigation workspace (vanilla JS).
+ *
+ * Design principles enforced in this revision:
+ *   - Every displayed value comes from a real backend response.
+ *   - No fabricated routes, candidates, metrics, telemetry, logs or persons.
+ *   - Loading / empty / error states are shown instead of fake fallbacks.
+ *   - XAI panels render only the structured evidence the backend returns.
  */
 
 /* ═══════════════════════════════════════════════════════════════════
-   CHART.JS GLOBAL DEFAULTS
-═══════════════════════════════════════════════════════════════════ */
-if (typeof Chart !== 'undefined') {
-  Chart.defaults.color          = '#cbd5e1';
-  Chart.defaults.borderColor    = 'rgba(255, 255, 255, 0.12)';
-  Chart.defaults.font.family    = 'Inter, system-ui, sans-serif';
-  Chart.defaults.font.size      = 11;
-  Chart.defaults.plugins.legend.display = false;
-  Chart.defaults.plugins.tooltip.backgroundColor = '#0d1427';
-  Chart.defaults.plugins.tooltip.borderColor     = '#06b6d4';
-  Chart.defaults.plugins.tooltip.borderWidth     = 1;
-  Chart.defaults.plugins.tooltip.padding         = 12;
-  Chart.defaults.plugins.tooltip.titleFont       = { weight: '800', size: 13, family: 'Outfit, sans-serif' };
-  Chart.defaults.plugins.tooltip.bodyFont        = { size: 12, family: 'JetBrains Mono, monospace' };
-  Chart.defaults.plugins.tooltip.cornerRadius    = 8;
-  Chart.defaults.animation.duration              = 800;
-  Chart.defaults.animation.easing               = 'easeInOutQuart';
-}
-
-/* ═══════════════════════════════════════════════════════════════════
-   STATE & CONSTANTS
+   STATE
 ═══════════════════════════════════════════════════════════════════ */
 const State = {
-  view:            'dashboard',
-  personsViewMode: 'grid', // 'grid' or 'table'
-  activeQueryId:   null,
-  lastRoute:       null,
-  ws:              null,
-  cameras:         [],
-  canvasAnimIds:   {},
+  view: 'dashboard',
+  cameras: [],
+  ws: null,
+  activeQueryId: null,
+  lastRoute: null,
+  selectedCandidateIdx: null,
+  personsViewMode: 'grid',
 };
 
-const Charts = {
-  activity: null,
-  cameras:  null,
-  sparks:   {},
+const Charts = { cameras: null, queries: null };
+
+// Light, restrained palette for charts.
+const PALETTE = {
+  navy:    '#172B50',
+  burgundy:'#8C263B',
+  success: '#1F8A6B',
+  warning: '#B8860B',
+  error:   '#C0392B',
+  info:    '#2D6A9F',
+  muted:   '#8B95A4',
+  grid:    '#E5DED2',
+  text:    '#596579',
 };
 
-const CAM_LAYOUT = {
-  C01: { x: 155, y: 180, label: 'C01', loc: 'Entrance Zone' },
-  C02: { x: 400, y: 180, label: 'C02', loc: 'Corridor Hub'  },
-  C03: { x: 645, y: 180, label: 'C03', loc: 'Canteen Area' },
-};
-
-/* Demo Fallback Session for Immediate 1st-Look Wow */
-const MOCK_DEMO_ROUTE = {
-  total_cameras_matched: 2,
-  route_confidence: 0.74,
-  match_decision: 'CONFIDENT_MATCH',
-  top_candidates: [],
-  narration: 'Seen at Entrance Zone (C01) at 10:42:15 \u2192 Corridor Hub (C02) at 10:43:08 [gap: 53s, expected: 45s \u2713 on time]',
-  sightings: [
-    { camera_id: 'C01', track_id: 104, first_seen: '10:42:15.00', last_seen: '10:42:42.00',
-      appearance_score: 0.78, spatial_score: 1.0, temporal_score: 1.0, fusion_score: 0.84,
-      best_confidence: 84.0, match_status: 'CONFIDENT_MATCH', matching_mode: 'body',
-      identity_score: 0.78, body_similarity: 0.78, face_similarity: null },
-    { camera_id: 'C02', track_id: 217, first_seen: '10:43:08.00', last_seen: '10:43:55.00',
-      appearance_score: 0.71, spatial_score: 0.91, temporal_score: 0.88, fusion_score: 0.74,
-      best_confidence: 74.0, match_status: 'CONFIDENT_MATCH', matching_mode: 'body',
-      identity_score: 0.71, body_similarity: 0.71, face_similarity: null },
-  ],
-  steps: [
-    { step_order: 0, camera_id: 'C01', camera_location: 'Entrance Zone',
-      timestamp: '10:42:15.00', confidence: 84.0, matching_mode: 'body',
-      observed_gap_sec: null, expected_transit_sec: null, gap_verdict: null },
-    { step_order: 1, camera_id: 'C02', camera_location: 'Corridor Hub',
-      timestamp: '10:43:08.00', confidence: 74.0, matching_mode: 'body',
-      observed_gap_sec: 53, expected_transit_sec: 45, gap_verdict: '\u2713 on time' },
-  ],
-  skipped_cameras: [
-    { camera_id: 'C03', camera_location: 'Canteen Area', match_status: 'NO_USABLE_EVIDENCE' },
-  ],
+const VIEW_TITLES = {
+  dashboard: 'Dashboard',
+  query: 'Re-ID Search',
+  map: 'Route Reconstruction',
+  timeline: 'Sighting Timeline',
+  'camera-location': 'Camera Locations',
+  watchlist: 'Watchlist & Persons',
+  upload: 'Pipeline Video Studio',
 };
 
 /* ═══════════════════════════════════════════════════════════════════
-   BOOTSTRAP & INITIALIZATION
+   BOOTSTRAP
 ═══════════════════════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', async () => {
-  initClock();
   setupNav();
   setupQueryForm();
   setupWatchlistForm();
   setupUploadForm();
   setupDropZones();
   setupCamRadios();
-  initMapSvg();
+  document.getElementById('menu-toggle')?.addEventListener('click', () => {
+    document.getElementById('sidebar').classList.toggle('open');
+  });
   connectWs();
-  initScanlinePreference();
-  initCanvasViewports();
-  initLiveSystemTelemetry();
   await loadCameras();
   loadDashboard();
   loadPersonsSelect();
   loadUploadJobs();
-  loadCameraConfig();   // pre-fetch so radios are live from first page load
+  loadCameraConfig();
 });
 
-/* ── System Clock ── */
-function initClock() {
-  const clockEl = document.getElementById('top-clock');
-  function update() {
-    const d = new Date();
-    if (clockEl) clockEl.textContent = d.toISOString().substring(11, 19) + ' UTC';
-  }
-  update();
-  setInterval(update, 1000);
-}
-
-/* ── HUD Scanlines Toggle ── */
-function toggleScanlines() {
-  const isEnabled = document.body.classList.toggle('hud-scanlines');
-  localStorage.setItem('trace_hud_scanlines', isEnabled ? '1' : '0');
-  toast(isEnabled ? 'HUD Scanlines Enabled' : 'HUD Scanlines Disabled', 'info');
-}
-
-function initScanlinePreference() {
-  if (localStorage.getItem('trace_hud_scanlines') !== '0') {
-    document.body.classList.add('hud-scanlines');
-  }
-}
-
-/* ── HTML5 Canvas Surveillance Viewport Shaders ── */
-function initCanvasViewports() {
-  const feeds = [
-    { id: 'vp-c01', name: 'CAM-01', target: 'TARGET #104', color: '#10b981' },
-    { id: 'vp-c02', name: 'CAM-02', target: 'TARGET #108', color: '#06b6d4' },
-    { id: 'vp-c03', name: 'CAM-03', target: 'TARGET #112', color: '#f59e0b' }
-  ];
-
-  feeds.forEach((cfg, idx) => {
-    const feed = document.querySelector(`#${cfg.id} .vp-feed`);
-    if (!feed) return;
-
-    let canvas = feed.querySelector('canvas');
-    if (!canvas) {
-      canvas = document.createElement('canvas');
-      canvas.className = 'vp-canvas-simulation';
-      canvas.width  = 340;
-      canvas.height = 220;
-      feed.insertBefore(canvas, feed.firstChild);
-    }
-
-    // Append live timestamp badge if not present
-    if (!feed.querySelector('.vp-timestamp-badge')) {
-      const timeBadge = document.createElement('div');
-      timeBadge.className = 'vp-timestamp-badge';
-      timeBadge.id = `ts-${cfg.id}`;
-      feed.appendChild(timeBadge);
-    }
-
-    const ctx = canvas.getContext('2d');
-    let angle = idx * 1.5;
-    let targetX = 80 + idx * 70;
-    let targetY = 70 + idx * 30;
-    let dx = (idx % 2 === 0 ? 1 : -1) * 0.7;
-    let dy = (idx % 2 === 0 ? -1 : 1) * 0.45;
-
-    function renderFeed() {
-      angle += 0.02;
-      targetX += dx;
-      targetY += dy;
-
-      if (targetX < 40 || targetX > canvas.width - 90) dx *= -1;
-      if (targetY < 40 || targetY > canvas.height - 90) dy *= -1;
-
-      // Dark obsidian CCTV viewport background
-      ctx.fillStyle = '#030712';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Subtle CCTV noise grain effect
-      for (let i = 0; i < 180; i++) {
-        const nx = Math.random() * canvas.width;
-        const ny = Math.random() * canvas.height;
-        const alpha = Math.random() * 0.07;
-        ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
-        ctx.fillRect(nx, ny, 1.5, 1.5);
-      }
-
-      // CCTV Grid lines
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.035)';
-      ctx.lineWidth = 1;
-      for (let x = 0; x < canvas.width; x += 30) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-      }
-      for (let y = 0; y < canvas.height; y += 30) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-      }
-
-      // Radar Arc Sweep
-      const cx = canvas.width / 2, cy = canvas.height / 2;
-      ctx.beginPath();
-      ctx.arc(cx, cy, 85, angle, angle + 0.55);
-      ctx.lineTo(cx, cy);
-      ctx.fillStyle = cfg.color + '1a';
-      ctx.fill();
-
-      // Simulated Target Reticle motion
-      const rx = cx + Math.cos(angle * 0.8) * 45;
-      const ry = cy + Math.sin(angle * 0.6) * 25;
-      ctx.beginPath();
-      ctx.arc(rx, ry, 16, 0, Math.PI * 2);
-      ctx.strokeStyle = idx === 0 ? '#10b981' : idx === 1 ? '#06b6d4' : '#f59e0b';
-      ctx.lineWidth = 1.6;
-      ctx.stroke();
-
-      State.canvasAnimIds[cfg.id] = requestAnimationFrame(renderFeed);
-    }
-    renderFeed();
-  });
-}
-
-/* ── Live Real-Time Telemetry & Terminal Stream ── */
-function initLiveSystemTelemetry() {
-  // Stream periodic realistic log events into terminal cards
-  const logMessages = [
-    { tag: 'SYS', msg: 'YOLOv8x inference batch #4182 completed (11.8ms)', type: 'ok' },
-    { tag: 'AI',  msg: 'ByteTrack ID #104 motion vector velocity: 1.4 m/s', type: 'ok' },
-    { tag: 'NET', msg: 'C01 -> C02 spatial edge transit weight verified', type: 'ok' },
-    { tag: 'GPU', msg: 'NVIDIA RTX 4090 VRAM usage steady @ 1.82 GB / 8.0 GB', type: 'ok' },
-    { tag: 'REID',msg: 'OSNet 512-d embedding distance: 0.058 (high match)', type: 'ok' },
-    { tag: 'CAM', msg: 'CAM-02 Corridor telemetry stream heartbeat OK', type: 'ok' }
-  ];
-
-  setInterval(() => {
-    const terminals = document.querySelectorAll('.terminal-card');
-    terminals.forEach(term => {
-      const msgObj = logMessages[Math.floor(Math.random() * logMessages.length)];
-      const now = new Date();
-      const timeStr = now.toISOString().substring(11, 19);
-      const logLine = document.createElement('div');
-      logLine.className = 'log-line';
-      logLine.innerHTML = `<span class="log-time">[${timeStr}]</span> <span class="log-tag">[${msgObj.tag}]</span> ${msgObj.msg}`;
-      term.appendChild(logLine);
-      if (term.children.length > 8) term.removeChild(term.firstElementChild);
-      term.scrollTop = term.scrollHeight;
-    });
-
-    // Hardware Latency Fluctuation
-    const latEl = document.getElementById('telemetry-latency');
-    if (latEl) {
-      const latVal = (11.5 + Math.random() * 1.6).toFixed(1);
-      latEl.textContent = `${latVal} ms / frame`;
-    }
-  }, 3500);
-}
-
-/* ═══════════════════════════════════════════════════════════════════
-   NAVIGATION & VIEWS
-═══════════════════════════════════════════════════════════════════ */
+/* ── Navigation ── */
 function setupNav() {
   document.querySelectorAll('.nav-item').forEach(el =>
     el.addEventListener('click', e => { e.preventDefault(); switchView(el.dataset.view); })
@@ -269,51 +82,52 @@ function switchView(name) {
   document.querySelectorAll('.view').forEach(el =>
     el.classList.toggle('active', el.id === `view-${name}`)
   );
+  const titleEl = document.getElementById('page-title');
+  if (titleEl) titleEl.textContent = VIEW_TITLES[name] || '';
+  document.getElementById('sidebar').classList.remove('open');
+
   if (name === 'dashboard') loadDashboard();
   if (name === 'watchlist') loadPersonsList();
   if (name === 'upload')    { loadUploadJobs(); loadCameraConfig(); }
-  if (name === 'query')     { loadPersonsSelect(); renderCandidateMatchesShowcase(); }
+  if (name === 'query')     { loadPersonsSelect(); }
   if (name === 'map') {
     (async () => {
       const activeId = await loadSessionSelect('map-session-select');
-      const sel = document.getElementById('map-session-select');
-      const chosen = sel?.value || activeId;
-      if (chosen && chosen !== 'demo-session') {
-        loadMapRoute(parseInt(chosen));
-      } else if (State.lastRoute && State.lastRoute !== MOCK_DEMO_ROUTE) {
-        renderMapRoute(State.lastRoute);
-      } else {
-        loadDemoRoute();
-      }
+      if (activeId) loadMapRoute(parseInt(activeId));
+      else renderMapRoute(null);
     })();
   }
   if (name === 'timeline') {
     (async () => {
       const activeId = await loadSessionSelect('timeline-session-select');
-      const sel = document.getElementById('timeline-session-select');
-      const chosen = sel?.value || activeId;
-      renderTimeline(chosen);
+      if (activeId) renderTimeline(activeId);
+      else renderTimeline(null);
     })();
   }
   if (name === 'camera-location') loadCameraLocationView();
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   WEBSOCKET COMMUNICATION
+   WEBSOCKET
 ═══════════════════════════════════════════════════════════════════ */
 function connectWs() {
-  const dot = document.getElementById('ws-dot');
-  const lbl = document.getElementById('ws-label');
-  dot.className = 'ws-dot';
-  lbl.textContent = 'Connecting…';
+  const dot   = document.getElementById('ws-dot');
+  const dot2  = document.getElementById('ws-dot-2');
+  const lbl   = document.getElementById('ws-label');
+  const pill  = document.getElementById('ws-pill-text');
+  dot.className = 'ws-dot'; dot2.className = 'ws-dot';
+  lbl.textContent = 'Connecting…'; pill.textContent = 'Connecting';
 
   State.ws = API.createWebSocket(
     onWsMsg,
-    () => { dot.classList.add('connected'); lbl.textContent = 'Live Matrix'; },
     () => {
-      dot.classList.remove('connected');
+      dot.classList.add('connected'); dot2.classList.add('connected');
+      lbl.textContent = 'Connected'; pill.textContent = 'Live';
+    },
+    () => {
+      dot.classList.remove('connected'); dot2.classList.remove('connected');
       dot.classList.add('disconnected');
-      lbl.textContent = 'Reconnecting…';
+      lbl.textContent = 'Reconnecting…'; pill.textContent = 'Offline';
       setTimeout(connectWs, 2500);
     }
   );
@@ -337,16 +151,14 @@ function onProgress(msg) {
 function onSighting(msg) {
   if (msg.session_id !== State.activeQueryId) return;
   const s = msg.sighting;
-  const status = s.match_status || 'POSSIBLE_MATCH_REVIEW';
   const scoreLabel = `match score ${s.best_confidence.toFixed(1)}% (similarity-derived)`;
-  if (status === 'CONFIDENT_MATCH') {
+  if (s.match_status === 'CONFIDENT_MATCH') {
     toast(`Camera ${s.camera_id} — candidate found (${scoreLabel})`, 'info');
-  } else if (status === 'FACE_MISMATCH') {
-    toast(`Camera ${s.camera_id} — face mismatch detected (${scoreLabel})`, 'error');
+  } else if (s.match_status === 'FACE_MISMATCH') {
+    toast(`Camera ${s.camera_id} — face mismatch (${scoreLabel})`, 'error');
   } else {
     toast(`Camera ${s.camera_id} — candidate for review (${scoreLabel})`, 'info');
   }
-  if (State.view === 'map') highlightCamNode(s.camera_id, 'matched');
 }
 
 function onRouteComplete(msg) {
@@ -362,13 +174,13 @@ function onRouteComplete(msg) {
 
   if (decision === 'CONFIDENT_MATCH') {
     showQueryResult(`Candidate found on ${n} camera${n !== 1 ? 's' : ''} — match score ${cf}% (similarity-derived, not a probability)`, false);
-    toast('Candidate trajectory ready — verify visually in Route Reconstruction', 'success');
+    toast('Candidate trajectory ready — verify in Route Reconstruction', 'success');
   } else if (decision === 'POSSIBLE_MATCH_REVIEW') {
     showQueryResult(`No confident match — ${n > 0 ? n + ' candidate(s) for review' : 'top candidates below threshold'} (match score ${cf}%)`, false);
-    toast('No confident match — top candidates shown for human review', 'info');
+    toast('No confident match — top candidates shown for review', 'info');
   } else {
     showQueryResult('No confident match — person not found with sufficient evidence', false);
-    toast('No confident match — see top candidates for visual review', 'info');
+    toast('No confident match — see top candidates for review', 'info');
   }
 
   renderQueryResult(msg.route);
@@ -381,9 +193,9 @@ function onAlert(msg) {
   const a = msg.alert;
   toast(`${a.severity}: ${a.title}`, a.severity === 'HIGH' ? 'error' : 'info');
   const badge = document.getElementById('alert-unread-count');
-  if (badge) { badge.style.display = 'inline-block'; badge.textContent = (parseInt(badge.textContent) || 0) + 1; }
+  if (badge) { badge.style.display = 'inline-flex'; badge.textContent = (parseInt(badge.textContent) || 0) + 1; }
   const navBadge = document.getElementById('nav-alert-badge');
-  if (navBadge) navBadge.style.display = 'inline-block';
+  if (navBadge) navBadge.style.display = 'inline-flex';
   if (State.view === 'dashboard') loadDashboard();
 }
 
@@ -391,7 +203,7 @@ function onPipelineErr(msg) {
   if (msg.session_id !== State.activeQueryId) return;
   hideProgress();
   enableQueryBtn();
-  showQueryResult(`Execution Error: ${msg.message}`, true);
+  showQueryResult(`Execution error: ${msg.message}`, true);
   toast(`Query failed: ${msg.message}`, 'error');
 }
 
@@ -399,75 +211,66 @@ function onPipelineErr(msg) {
    CAMERAS
 ═══════════════════════════════════════════════════════════════════ */
 async function loadCameras() {
-  try {
-    State.cameras = await API.cameras.list();
-    (State.cameras || []).forEach(c => {
-      if (CAM_LAYOUT[c.id]) {
-        CAM_LAYOUT[c.id].loc = c.location || CAM_LAYOUT[c.id].loc;
-      }
-    });
-  } catch { State.cameras = []; }
+  try { State.cameras = await API.cameras.list(); }
+  catch { State.cameras = []; }
+}
+
+function camLocation(id) {
+  const c = (State.cameras || []).find(x => x.id === id);
+  return c?.location || id;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   DASHBOARD TELEMETRY
+   DASHBOARD
 ═══════════════════════════════════════════════════════════════════ */
 async function loadDashboard() {
+  const setKpi = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+
   try {
     const [dash, sessions] = await Promise.all([
       API.analytics.dashboard(),
-      API.queries.list(10),
+      API.queries.list(50),
     ]);
     const s = dash.stats;
 
-    // Animate KPI counters
-    animateKpi('kv-queries',   s.total_queries || 8);
-    animateKpi('kv-sightings', s.total_sightings || 48);
-    animateKpi('kv-alerts',    s.unacknowledged_alerts || 1);
-    animateKpi('kv-watchlist', s.watchlist_persons || 4);
-    animateKpi('kv-cameras',   s.cameras_active || 3);
-    animateKpi('kv-completed', s.completed_queries || 8);
+    setKpi('kv-cameras',   s.cameras_active ?? '—');
+    setKpi('kv-persons',   s.total_persons ?? '—');
+    setKpi('kv-watchlist', s.watchlist_persons ?? '—');
+    setKpi('kv-queries',   s.total_queries ?? '—');
+    setKpi('kv-sightings', s.total_sightings ?? '—');
+    setKpi('kv-alerts',    s.unacknowledged_alerts ?? '—');
+    const hint = document.getElementById('kv-completed-hint');
+    if (hint) hint.textContent = `${s.completed_queries ?? 0} completed`;
+
+    const unreadBadge = document.getElementById('alert-unread-count');
+    if (unreadBadge) {
+      if (s.unacknowledged_alerts > 0) { unreadBadge.style.display = 'inline-flex'; unreadBadge.textContent = s.unacknowledged_alerts; }
+      else unreadBadge.style.display = 'none';
+    }
+    const navBadge = document.getElementById('nav-alert-badge');
+    if (navBadge) navBadge.style.display = s.unacknowledged_alerts > 0 ? 'inline-flex' : 'none';
 
     renderAlertFeed(dash.recent_alerts);
     renderCameraStatusList(dash.camera_activity);
     renderQueriesTable(sessions);
-
-    renderActivityChart(s, dash.camera_activity);
     renderCameraChart(dash.camera_activity);
-    renderSparklines(s, sessions);
-
+    renderQueryStatusChart(sessions);
   } catch (e) {
-    console.error('Dashboard telemetry error:', e);
+    console.error('Dashboard load error:', e);
+    ['kv-cameras','kv-persons','kv-watchlist','kv-queries','kv-sightings','kv-alerts'].forEach(id => setKpi(id, '—'));
+    document.getElementById('alert-feed').innerHTML = `<div class="empty-msg">Unable to load dashboard data.<br><span class="text-3">${esc(e.message)}</span></div>`;
+    document.getElementById('camera-status-list').innerHTML = `<div class="empty-msg">Unable to load cameras.</div>`;
+    document.getElementById('recent-queries-table').innerHTML = `<div class="empty-msg">Unable to load sessions.</div>`;
   }
-}
-
-function animateKpi(id, target) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  const val = parseInt(target) || 0;
-  const start = parseInt(el.textContent) || 0;
-  if (start === val) { el.textContent = val; return; }
-  const duration = 750;
-  const startTime = performance.now();
-  const raf = (now) => {
-    const t = Math.min((now - startTime) / duration, 1);
-    const ease = 1 - Math.pow(1 - t, 3);
-    el.textContent = Math.round(start + (val - start) * ease);
-    if (t < 1) requestAnimationFrame(raf);
-    else el.textContent = val;
-  };
-  requestAnimationFrame(raf);
 }
 
 function renderAlertFeed(alerts) {
   const el = document.getElementById('alert-feed');
-  const fallbackAlerts = [
-    { title: 'Pipeline Ready', message: 'Upload a video and submit a query to begin re-identification analysis.', created_at: new Date().toISOString(), severity: 'LOW', acknowledged: false },
-    { title: 'Camera Stream Reconnected', message: 'Channel C02 (Corridor Hub) telemetry restored', created_at: new Date().toISOString(), severity: 'LOW', acknowledged: true }
-  ];
-  const displayAlerts = alerts?.length ? alerts : fallbackAlerts;
-
-  el.innerHTML = displayAlerts.map(a => `
+  if (!alerts?.length) {
+    el.innerHTML = `<div class="empty-msg">No alerts. Watchlist hits appear here after a search.</div>`;
+    return;
+  }
+  el.innerHTML = alerts.map(a => `
     <div class="alert-item ${a.acknowledged ? 'acked' : ''}">
       <div class="alert-severity-dot sev-${a.severity}"></div>
       <div class="alert-content">
@@ -477,83 +280,45 @@ function renderAlertFeed(alerts) {
       </div>
       ${!a.acknowledged
         ? `<button class="btn btn-ghost btn-xs" onclick="ackAlert(${a.id})">Acknowledge</button>`
-        : `<span style="font-size:.75rem;color:var(--text-3);font-family:var(--font-mono)">ACKED</span>`}
-    </div>
-  `).join('');
+        : `<span class="badge-pill badge-default">Acked</span>`}
+    </div>`).join('');
 }
 
 function renderCameraStatusList(activity) {
   const el = document.getElementById('camera-status-list');
-  const fallback = [
-    { camera_id: 'C01', total_sightings: 24, unique_persons: 6, location: 'Entrance Zone' },
-    { camera_id: 'C02', total_sightings: 18, unique_persons: 4, location: 'Corridor Hub' },
-    { camera_id: 'C03', total_sightings: 12, unique_persons: 3, location: 'Canteen Area' },
-  ];
-  const data = activity?.length ? activity : fallback;
-
-  el.innerHTML = data.map(c => `
+  if (!activity?.length) {
+    el.innerHTML = `<div class="empty-msg">No registered cameras with activity data.</div>`;
+    return;
+  }
+  el.innerHTML = activity.map(c => `
     <div class="cam-status-row">
-      <div class="cam-status-icon">
-        <svg viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M15 9l3.5-2v6L15 11" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
-      </div>
+      <div class="cam-status-icon"><svg viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M15 9l3.5-2v6L15 11" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
       <div class="cam-info">
         <div class="cam-name">${esc(c.camera_id)}</div>
         <div class="cam-loc">${esc(c.location)}</div>
-        <div class="cam-stats">${c.total_sightings} sightings · ${c.recent_queries ?? 0} queries</div>
+        <div class="cam-stats">${c.total_sightings} sightings · ${c.recent_queries ?? 0} completed-query sightings</div>
       </div>
-      <span class="cam-badge cam-badge-active">ONLINE</span>
-    </div>
-  `).join('');
+      <span class="cam-badge cam-badge-active">Active</span>
+    </div>`).join('');
 }
 
 function renderQueriesTable(sessions) {
   const el = document.getElementById('recent-queries-table');
   if (!sessions?.length) {
-    el.innerHTML = `
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Session ID</th>
-            <th>Submitted Time</th>
-            <th>Status</th>
-            <th>Camera Trajectory</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>#DEMO-101</td>
-            <td>10:42:15 UTC</td>
-            <td><span class="chip chip-done">DONE</span></td>
-            <td><a href="#" onclick="loadDemoRoute();return false" style="color:var(--cyan);font-weight:800">Inspect Trajectory →</a></td>
-          </tr>
-          <tr>
-            <td>#DEMO-102</td>
-            <td>10:35:00 UTC</td>
-            <td><span class="chip chip-done">DONE</span></td>
-            <td><a href="#" onclick="loadDemoRoute();return false" style="color:var(--cyan);font-weight:800">Inspect Trajectory →</a></td>
-          </tr>
-        </tbody>
-      </table>`;
+    el.innerHTML = `<div class="empty-msg">No search sessions yet. Submit a query in Re-ID Search.</div>`;
     return;
   }
   el.innerHTML = `
     <table class="data-table">
-      <thead>
-        <tr>
-          <th>Session ID</th>
-          <th>Submitted Time</th>
-          <th>Status</th>
-          <th>Camera Trajectory</th>
-        </tr>
-      </thead>
+      <thead><tr><th>Session</th><th>Submitted</th><th>Status</th><th>Route</th></tr></thead>
       <tbody>
         ${sessions.map(s => `
           <tr>
-            <td>#${s.id}</td>
+            <td class="mono">#${s.id}</td>
             <td>${fmtTime(s.submitted_at)}</td>
-            <td><span class="chip chip-${s.status}">${s.status.toUpperCase()}</span></td>
+            <td><span class="chip chip-${s.status}">${s.status}</span></td>
             <td>${s.status === 'done'
-              ? `<a href="#" onclick="loadRouteFromSession(${s.id});return false" style="color:var(--cyan);font-weight:800">Inspect Trajectory →</a>`
+              ? `<a href="#" class="btn-link" onclick="loadRouteFromSession(${s.id});return false">View →</a>`
               : '—'}</td>
           </tr>`).join('')}
       </tbody>
@@ -563,9 +328,9 @@ function renderQueriesTable(sessions) {
 async function ackAlert(id) {
   try {
     await API.analytics.acknowledgeAlert(id);
-    loadDashboard();
     toast('Alert acknowledged', 'success');
-  } catch (e) { toast('Alert acknowledged', 'success'); }
+    loadDashboard();
+  } catch (e) { toast('Could not acknowledge: ' + e.message, 'error'); }
 }
 
 async function loadRouteFromSession(id) {
@@ -576,195 +341,74 @@ async function loadRouteFromSession(id) {
   loadMapRoute(id);
 }
 
-function loadDemoRoute() {
-  switchView('map');
-  State.lastRoute = MOCK_DEMO_ROUTE;
-  renderMapRoute(MOCK_DEMO_ROUTE);
-}
-
 /* ═══════════════════════════════════════════════════════════════════
-   CHARTS
+   CHARTS — real data only
 ═══════════════════════════════════════════════════════════════════ */
-const CHART_COLORS = {
-  accent:  '#6366f1',
-  purple:  '#a855f7',
-  green:   '#10b981',
-  amber:   '#f59e0b',
-  red:     '#f43f5e',
-  blue:    '#3b82f6',
-  cyan:    '#06b6d4',
-};
-
-function renderActivityChart(stats, cameraActivity) {
-  const canvas = document.getElementById('chart-activity');
-  if (!canvas) return;
-
-  const total   = stats.total_sightings || 48;
-  const weights = [0.08, 0.11, 0.13, 0.17, 0.15, 0.20, 0.16];
-  const data    = weights.map(w => Math.round(total * w));
-  const labels  = last7DayLabels();
-
-  if (Charts.activity) { Charts.activity.destroy(); Charts.activity = null; }
-
-  const ctx  = canvas.getContext('2d');
-  const grad = ctx.createLinearGradient(0, 0, 0, 200);
-  grad.addColorStop(0,   'rgba(6,182,212,0.45)');
-  grad.addColorStop(0.7, 'rgba(6,182,212,0.06)');
-  grad.addColorStop(1,   'rgba(6,182,212,0)');
-
-  Charts.activity = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        label: 'Sightings',
-        data,
-        borderColor:     CHART_COLORS.cyan,
-        backgroundColor: grad,
-        borderWidth:     3,
-        pointRadius:     5,
-        pointHoverRadius: 7,
-        pointBackgroundColor: CHART_COLORS.cyan,
-        pointBorderColor:    '#040711',
-        pointBorderWidth:    2,
-        fill:      true,
-        tension:   0.4,
-      }],
-    },
-    options: {
-      responsive:          true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend:  { display: false },
-        tooltip: { mode: 'index', intersect: false },
-      },
-      scales: {
-        x: {
-          grid:  { color: 'rgba(255,255,255,0.06)' },
-          ticks: { color: '#94a3b8', font: { size: 11, weight: '700' } },
-        },
-        y: {
-          grid:     { color: 'rgba(255,255,255,0.06)' },
-          ticks:    { color: '#94a3b8', font: { size: 11 }, precision: 0 },
-          beginAtZero: true,
-        },
-      },
-    },
-  });
-}
-
 function renderCameraChart(cameraActivity) {
   const canvas = document.getElementById('chart-cameras');
   if (!canvas) return;
+  if (!cameraActivity?.length) {
+    if (Charts.cameras) { Charts.cameras.destroy(); Charts.cameras = null; }
+    return;
+  }
+  const labels = cameraActivity.map(c => c.camera_id);
+  const values = cameraActivity.map(c => c.total_sightings || 0);
+  const colors = [PALETTE.burgundy, PALETTE.info, PALETTE.success, PALETTE.warning, PALETTE.navy];
 
-  const fallback = [
-    { camera_id: 'C01', total_sightings: 24, location: 'Entrance Zone' },
-    { camera_id: 'C02', total_sightings: 18, location: 'Corridor Hub' },
-    { camera_id: 'C03', total_sightings: 12, location: 'Canteen Area' },
-  ];
-  const data     = cameraActivity?.length ? cameraActivity : fallback;
-  const labels   = data.map(c => `${c.camera_id}`);
-  const values   = data.map(c => c.total_sightings || 0);
-  const colors   = [CHART_COLORS.accent, CHART_COLORS.cyan, CHART_COLORS.purple];
-
-  if (Charts.cameras) { Charts.cameras.destroy(); Charts.cameras = null; }
-
-  const ctx = canvas.getContext('2d');
-  Charts.cameras = new Chart(ctx, {
+  if (Charts.cameras) Charts.cameras.destroy();
+  Charts.cameras = new Chart(canvas.getContext('2d'), {
     type: 'bar',
+    data: { labels, datasets: [{
+      label: 'Sightings', data: values,
+      backgroundColor: colors.slice(0, values.length).map(c => c + 'cc'),
+      borderColor: colors.slice(0, values.length),
+      borderWidth: 1.5, borderRadius: 6, borderSkipped: false,
+    }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `${ctx.parsed.y} sightings` } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: PALETTE.text, font: { size: 11, weight: '600' } } },
+        y: { grid: { color: PALETTE.grid }, ticks: { color: PALETTE.text, font: { size: 11 }, precision: 0 }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+function renderQueryStatusChart(sessions) {
+  const canvas = document.getElementById('chart-queries');
+  if (!canvas) return;
+  const counts = { done: 0, running: 0, pending: 0, failed: 0 };
+  (sessions || []).forEach(s => { if (counts[s.status] != null) counts[s.status]++; });
+  const scope = document.getElementById('chart-queries-scope');
+  if (scope) scope.textContent = `Last ${sessions?.length || 0} sessions`;
+
+  if (Charts.queries) Charts.queries.destroy();
+  Charts.queries = new Chart(canvas.getContext('2d'), {
+    type: 'doughnut',
     data: {
-      labels,
+      labels: ['Completed', 'Running', 'Pending', 'Failed'],
       datasets: [{
-        label: 'Sightings',
-        data:  values,
-        backgroundColor: colors.slice(0, values.length).map(c => c + 'ee'),
-        borderColor:     colors.slice(0, values.length),
-        borderWidth:     2,
-        borderRadius:    8,
-        borderSkipped:   false,
+        data: [counts.done, counts.running, counts.pending, counts.failed],
+        backgroundColor: [PALETTE.success, PALETTE.info, PALETTE.muted, PALETTE.error],
+        borderColor: '#FFFFFF', borderWidth: 2,
       }],
     },
     options: {
-      responsive:          true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: {
-          grid:  { display: false },
-          ticks: { color: '#94a3b8', font: { size: 12, weight: '800' } },
-        },
-        y: {
-          grid:     { color: 'rgba(255,255,255,0.06)' },
-          ticks:    { color: '#94a3b8', font: { size: 11 }, precision: 0 },
-          beginAtZero: true,
-        },
+      responsive: true, maintainAspectRatio: false, cutout: '62%',
+      plugins: {
+        legend: { position: 'bottom', labels: { color: PALETTE.text, font: { size: 11 }, padding: 12, usePointStyle: true, pointStyle: 'circle' } },
+        tooltip: { callbacks: { label: ctx => `${ctx.label}: ${ctx.parsed}` } },
       },
     },
   });
 }
 
-function renderSparklines(stats, sessions) {
-  const sparkDefs = [
-    { id: 'spark-queries',   color: CHART_COLORS.blue,   data: sparkFromCount(stats.total_queries || 8) },
-    { id: 'spark-sightings', color: CHART_COLORS.purple,  data: sparkFromCount(stats.total_sightings || 48) },
-    { id: 'spark-alerts',    color: CHART_COLORS.red,    data: sparkFromCount(stats.unacknowledged_alerts || 1) },
-    { id: 'spark-watchlist', color: CHART_COLORS.amber,  data: sparkFromCount(stats.watchlist_persons || 4) },
-    { id: 'spark-cameras',   color: CHART_COLORS.green,  data: [3,3,3,3,3,3,stats.cameras_active||3] },
-    { id: 'spark-completed', color: CHART_COLORS.cyan,   data: sparkFromCount(stats.completed_queries || 8) },
-  ];
-
-  sparkDefs.forEach(({ id, color, data }) => {
-    const canvas = document.getElementById(id);
-    if (!canvas) return;
-    if (Charts.sparks[id]) { Charts.sparks[id].destroy(); }
-
-    const ctx  = canvas.getContext('2d');
-    const grad = ctx.createLinearGradient(0, 0, 0, 36);
-    grad.addColorStop(0, color + '80');
-    grad.addColorStop(1, color + '00');
-
-    Charts.sparks[id] = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: data.map((_, i) => i),
-        datasets: [{
-          data,
-          borderColor:     color,
-          backgroundColor: grad,
-          borderWidth:     2,
-          pointRadius:     0,
-          fill:            true,
-          tension:         0.4,
-        }],
-      },
-      options: {
-        responsive:          false,
-        animation:           { duration: 800 },
-        plugins: { legend: { display: false }, tooltip: { enabled: false } },
-        scales: { x: { display: false }, y: { display: false, beginAtZero: true } },
-      },
-    });
-  });
-}
-
-function sparkFromCount(count) {
-  const v = parseInt(count) || 12;
-  const weights = [0.08, 0.12, 0.15, 0.18, 0.14, 0.16, 0.17];
-  return weights.map(w => Math.round(v * w));
-}
-
-function last7DayLabels() {
-  const labels = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    labels.push(d.toLocaleDateString('en-GB', { weekday: 'short' }));
-  }
-  return labels;
-}
-
 /* ═══════════════════════════════════════════════════════════════════
-   SEARCH QUERY FORM & CANDIDATE SHOWCASE
+   RE-ID SEARCH
 ═══════════════════════════════════════════════════════════════════ */
 let _queryPhotoFile = null;
 
@@ -774,8 +418,7 @@ function setupQueryForm() {
       document.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
-      const panel = document.getElementById(btn.dataset.tab);
-      if (panel) panel.classList.add('active');
+      document.getElementById(btn.dataset.tab)?.classList.add('active');
     })
   );
   document.getElementById('btn-submit-query')?.addEventListener('click', submitQuery);
@@ -785,250 +428,170 @@ async function loadPersonsSelect() {
   const sel = document.getElementById('person-select');
   if (!sel) return;
   try {
-    const persons   = await API.persons.list();
-    const enrolled  = persons.filter(p => p.has_embedding);
+    const persons  = await API.persons.list();
+    const enrolled = persons.filter(p => p.has_embedding);
     if (!enrolled.length) {
-      sel.innerHTML = `
-        <option value="demo-1">Target Alpha (Subject-104) · SUSPECT</option>
-        <option value="demo-2">Target Beta (POI-209) · POI</option>`;
+      sel.innerHTML = '<option value="">No enrolled persons — register one with a photo</option>';
       return;
     }
     sel.innerHTML = '<option value="">Select a registered person…</option>' +
-      enrolled.map(p =>
-        `<option value="${p.id}">${esc(p.name)}${p.alias ? ` (${esc(p.alias)})` : ''} · ${p.watchlist_status.toUpperCase()}</option>`
-      ).join('');
+      enrolled.map(p => `<option value="${p.id}">${esc(p.name)}${p.alias ? ` (${esc(p.alias)})` : ''} · ${p.watchlist_status.toUpperCase()}</option>`).join('');
   } catch {
-    sel.innerHTML = `
-      <option value="demo-1">Target Alpha (Subject-104) · SUSPECT</option>
-      <option value="demo-2">Target Beta (POI-209) · POI</option>`;
+    sel.innerHTML = '<option value="">Unable to load persons</option>';
   }
 }
 
 async function submitQuery() {
-  const btn        = document.getElementById('btn-submit-query');
-  const msg        = document.getElementById('query-status-msg');
-  const activeTab  = document.querySelector('.seg-btn.active')?.dataset.tab;
-  msg.textContent  = '';
-  msg.className    = 'status-inline';
+  const btn       = document.getElementById('btn-submit-query');
+  const msg       = document.getElementById('query-status-msg');
+  const activeTab = document.querySelector('.seg-btn.active')?.dataset.tab;
+  msg.textContent = '';
+  msg.className   = 'status-inline';
 
-  // Only read person-select when on the registered-person tab
-  const pid = activeTab === 'tab-person'
-    ? document.getElementById('person-select')?.value
-    : null;
-
-  // Fall into demo only when genuinely no real data is available
-  const isDemoPersonSelected = pid === 'demo-1' || pid === 'demo-2';
-  const hasRealPhoto = activeTab === 'tab-photo' && _queryPhotoFile != null;
-  const hasRealPerson = activeTab === 'tab-person' && pid && !isDemoPersonSelected;
+  const pid = activeTab === 'tab-person' ? document.getElementById('person-select')?.value : null;
+  const hasRealPhoto   = activeTab === 'tab-photo' && _queryPhotoFile != null;
+  const hasRealPerson  = activeTab === 'tab-person' && pid;
 
   if (!hasRealPhoto && !hasRealPerson) {
-    runDemoSearchAnimation();
+    msg.textContent = 'Select a registered person or upload a reference photo first.';
+    msg.className   = 'status-inline err';
     return;
   }
 
   const fd = new FormData();
   if (activeTab === 'tab-person') {
-    if (!hasRealPerson) { msg.textContent = 'Select a registered target first.'; msg.className = 'status-inline err'; return; }
     fd.append('person_id', pid);
   } else {
-    if (!_queryPhotoFile) { msg.textContent = 'Select a reference photo first.'; msg.className = 'status-inline err'; return; }
     fd.append('image', _queryPhotoFile);
   }
 
-  btn.disabled  = true;
+  btn.disabled = true;
   btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" class="spin"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2" stroke-dasharray="22" stroke-dashoffset="11"/></svg> Searching…`;
   showProgress();
-  setProgressBar(5, 'Submitting query vector…');
+  setProgressBar(5, 'Submitting query…');
 
   try {
-    const session        = await API.queries.submit(fd);
-    State.activeQueryId  = session.id;
-    setProgressBar(15, `Session #${session.id} — running OSNet re-ID pipeline…`);
+    const session = await API.queries.submit(fd);
+    State.activeQueryId = session.id;
+    setProgressBar(15, `Session #${session.id} — running re-ID pipeline…`);
     msg.textContent = `Session #${session.id}`;
     msg.className   = 'status-inline ok';
   } catch (e) {
-    runDemoSearchAnimation();
+    hideProgress();
+    enableQueryBtn();
+    msg.textContent = e.message || 'Submission failed.';
+    msg.className   = 'status-inline err';
+    toast('Search failed: ' + e.message, 'error');
   }
 }
 
-function runDemoSearchAnimation() {
-  const btn = document.getElementById('btn-submit-query');
-  const card = document.querySelector('#view-query .card');
-  if (card) card.classList.add('radar-scan-overlay');
-
-  btn.disabled = true;
-  btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" class="spin"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2" stroke-dasharray="22" stroke-dashoffset="11"/></svg> Re-ID Pipeline Running…`;
-  showProgress();
-
-  setProgressBar(15, '[01/04] ⚡ Extracting 512-d OSNet FP32 Feature Vector...');
-
-  setTimeout(() => {
-    setProgressBar(45, '[02/04] 🔍 Querying SQLite Spatial-Temporal Index across 8,420 Frames...');
-  }, 400);
-
-  setTimeout(() => {
-    setProgressBar(75, '[03/04] 📊 Computing Cosine Similarity & Cross-Camera Re-ID Ranking...');
-  }, 800);
-
-  setTimeout(() => {
-    setProgressBar(100, '[04/04] Analysis complete — see top candidates below');
-    setTimeout(() => {
-      hideProgress();
-      if (card) card.classList.remove('radar-scan-overlay');
-      enableQueryBtn();
-      // Show a neutral placeholder — no hardcoded "confirmed" result
-      const resultCard = document.getElementById('query-result-card');
-      const resultBody = document.getElementById('query-result-body');
-      if (resultCard && resultBody) {
-        resultCard.style.display = 'block';
-        resultBody.innerHTML = `
-          <div class="result-banner" style="background:rgba(100,116,139,.15);border-color:var(--border)">
-            <div style="font-size:1rem;font-weight:800;color:var(--text-1)">DEMO MODE</div>
-            <div style="font-size:.82rem;color:var(--text-2);margin-top:.25rem">
-              Upload a real video and reference photo to run actual Re-ID analysis.
-              Demo mode does not perform real matching.
-            </div>
-          </div>`;
-      }
-    }, 450);
-  }, 1300);
-}
-
 function renderQueryResult(route) {
-  const card = document.getElementById('query-result-card');
   const body = document.getElementById('query-result-body');
-  card.style.display = 'block';
+  State.lastRoute = route;
+  State.selectedCandidateIdx = null;
+  document.getElementById('why-match-panel').innerHTML = '';
 
   const decision   = route.match_decision || 'NO_CONFIDENT_MATCH';
   const candidates = route.top_candidates || [];
 
-  // ── Decision banner ────────────────────────────────────────────────
-  let bannerClass = 'result-banner';
-  let bannerHtml  = '';
-
+  let bannerClass = 'result-banner', bannerHtml = '';
   if (decision === 'CONFIDENT_MATCH') {
     bannerClass += ' ok';
-    bannerHtml = `
-      <div style="font-size:1.05rem;font-weight:800">CANDIDATE FOUND — REQUIRES HUMAN VERIFICATION</div>
-      <div style="font-size:.82rem;margin-top:.35rem;color:var(--text-2)">
-        Match scores are similarity-derived values, NOT identity probabilities.
-        Visual verification is required before any identity conclusion.
-      </div>`;
+    bannerHtml = `<div class="rb-title">Candidate found — requires human verification</div>
+      <div class="rb-sub">Match scores are similarity-derived values, not identity probabilities. Visual verification is required before any identity conclusion.</div>`;
   } else if (decision === 'POSSIBLE_MATCH_REVIEW') {
     bannerClass += ' warn';
-    bannerHtml = `
-      <div style="font-size:1.05rem;font-weight:800">NO CONFIDENT MATCH — CANDIDATES BELOW THRESHOLD</div>
-      <div style="font-size:.82rem;margin-top:.35rem;color:var(--text-2)">
-        Top candidates are shown for human review. None met the match threshold.
-        Visual verification required before drawing any conclusion.
-      </div>`;
+    bannerHtml = `<div class="rb-title">No confident match — candidates below threshold</div>
+      <div class="rb-sub">Top candidates are shown for human review. None met the match threshold.</div>`;
   } else {
     bannerClass += ' error';
-    bannerHtml = `
-      <div style="font-size:1.05rem;font-weight:800">NO CONFIDENT MATCH</div>
-      <div style="font-size:.82rem;margin-top:.35rem;color:var(--text-2)">
-        The available evidence does not support identifying this person in the uploaded video.
-        Top candidates are shown for manual review.
-      </div>`;
+    bannerHtml = `<div class="rb-title">No confident match</div>
+      <div class="rb-sub">The available evidence does not support identifying this person. Top candidates are shown for manual review.</div>`;
   }
 
-  // ── Candidate cards ────────────────────────────────────────────────
-  let candidateHtml = '';
-  if (candidates.length > 0) {
-    const cardItems = candidates.map(c => {
-      const statusColor = c.match_status === 'CONFIDENT_MATCH'   ? 'var(--green)' :
-                          c.match_status === 'FACE_MISMATCH'      ? 'var(--red)'   :
-                          c.match_status === 'POSSIBLE_MATCH_REVIEW' ? 'var(--amber)' :
-                                                                     'var(--text-3)';
-      const statusLabel = c.match_status === 'CONFIDENT_MATCH'      ? 'CANDIDATE' :
-                          c.match_status === 'FACE_MISMATCH'         ? 'FACE MISMATCH' :
-                          c.match_status === 'POSSIBLE_MATCH_REVIEW' ? 'FOR REVIEW' :
-                                                                       c.match_status;
-      const cropUrl = c.crop_path
-        ? `/crops/${c.crop_path.replace(/\\/g, '/').split('/crops/').pop()}`
-        : null;
-
-      const faceRow = c.face_sim !== null && c.face_sim !== undefined
-        ? `<div style="font-size:.72rem;font-family:var(--font-mono);color:${c.face_veto_applied ? 'var(--red)' : 'var(--text-2)'}">
-             Face sim: ${(c.face_sim * 100).toFixed(1)}%
-             ${c.face_coverage !== null ? `· cov: ${(c.face_coverage * 100).toFixed(0)}%` : ''}
-             ${c.face_veto_applied ? ' ⛔ VETO' : ''}
-           </div>`
-        : '';
-
-      const kprRow = c.kpr_sim !== null && c.kpr_sim !== undefined
-        ? `<div style="font-size:.72rem;font-family:var(--font-mono);color:var(--text-2)">KPR sim: ${(c.kpr_sim * 100).toFixed(1)}%</div>`
-        : '';
-
-      return `
-        <div class="match-card" style="border-color:${statusColor}">
-          <div style="width:100%;height:105px;background:var(--surface3);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:2.4rem;border:1.5px solid ${statusColor};overflow:hidden">
-            ${cropUrl
-              ? `<img src="${esc(cropUrl)}" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.innerHTML='👤'" />`
-              : '👤'}
-          </div>
-          <div style="color:${statusColor};font-weight:800;font-size:.78rem;font-family:var(--font-mono);margin-top:.5rem;text-align:center">${statusLabel}</div>
-          <div class="match-conf" style="color:${statusColor};margin-top:.2rem">${c.best_confidence.toFixed(1)}</div>
-          <div style="font-size:.65rem;color:var(--text-3);font-family:var(--font-mono);text-align:center">similarity-derived score</div>
-          <div class="match-cam">${esc(c.camera_id)} · Track ${c.track_id}</div>
-          <div style="font-size:.75rem;color:var(--text-3);font-family:var(--font-mono)">${esc(c.first_seen || '—')}</div>
-          ${faceRow}${kprRow}
-          <div style="font-size:.68rem;color:var(--text-3);font-family:var(--font-mono);margin-top:.2rem">${esc(c.active_backbone)}</div>
-          ${renderExplanation(c.explanation)}
-        </div>`;
-    }).join('');
-
+  let candidateHtml;
+  if (candidates.length) {
     candidateHtml = `
-      <div style="font-family:var(--font-mono);font-size:.82rem;color:var(--cyan);margin-top:1.25rem;font-weight:800">
-        TOP VIDEO CANDIDATES (for human review)
-      </div>
-      <div style="font-size:.75rem;color:var(--text-3);margin-bottom:.75rem;font-family:var(--font-mono)">
-        Match scores are similarity-derived — NOT accuracy or identity probability.
-        Visual verification is required.
-      </div>
-      <div class="matches-grid">${cardItems}</div>`;
+      <div class="section-label">Top video candidates (for human review)</div>
+      <div class="matches-grid">${candidates.map((c, i) => renderCandidateCard(c, i)).join('')}</div>`;
   } else {
-    candidateHtml = `
-      <div style="margin-top:1rem;font-size:.85rem;color:var(--text-3);font-family:var(--font-mono)">
-        No candidates above minimum similarity threshold.
-        Upload a video first or check that the gallery has been processed.
-      </div>`;
+    candidateHtml = `<div class="empty-msg">No candidates above the minimum similarity threshold. Upload a video first or check that galleries have been processed.</div>`;
   }
 
   body.innerHTML = `
     <div class="${bannerClass}">${bannerHtml}</div>
     ${candidateHtml}
-    <div style="margin-top:1.5rem;display:flex;gap:.85rem">
+    <div class="form-row mt-3">
       <button class="btn btn-primary btn-sm" onclick="switchView('map')">View Route Map →</button>
+    </div>`;
+
+  // Wire candidate selection -> "Why this match?" panel
+  document.querySelectorAll('.match-card').forEach(card => {
+    card.addEventListener('click', () => selectCandidate(parseInt(card.dataset.idx)));
+  });
+  if (candidates.length) selectCandidate(0);
+}
+
+function renderCandidateCard(c, i) {
+  const statusColor = c.match_status === 'CONFIDENT_MATCH' ? PALETTE.success
+    : c.match_status === 'FACE_MISMATCH' ? PALETTE.error
+    : c.match_status === 'POSSIBLE_MATCH_REVIEW' ? PALETTE.warning : PALETTE.muted;
+  const statusLabel = c.match_status === 'CONFIDENT_MATCH' ? 'Candidate'
+    : c.match_status === 'FACE_MISMATCH' ? 'Face mismatch'
+    : c.match_status === 'POSSIBLE_MATCH_REVIEW' ? 'For review' : c.match_status;
+
+  const cropUrl = c.crop_path ? `/crops/${c.crop_path.replace(/\\/g, '/').split('/crops/').pop()}` : null;
+  const faceRow = (c.face_sim !== null && c.face_sim !== undefined)
+    ? `<div class="match-meta" style="color:${c.face_veto_applied ? PALETTE.error : PALETTE.text}">Face ${(c.face_sim*100).toFixed(1)}%${c.face_coverage != null ? ` · cov ${(c.face_coverage*100).toFixed(0)}%` : ''}${c.face_veto_applied ? ' · VETO' : ''}</div>` : '';
+  const kprRow = (c.kpr_sim !== null && c.kpr_sim !== undefined)
+    ? `<div class="match-meta">KPR ${(c.kpr_sim*100).toFixed(1)}%</div>` : '';
+
+  return `
+    <div class="match-card" data-idx="${i}" style="border-color:${statusColor}55">
+      <div class="match-thumb" style="border-color:${statusColor}55">
+        ${cropUrl ? `<img src="${esc(cropUrl)}" onerror="this.parentElement.textContent='👤'" />` : '👤'}
+      </div>
+      <div class="match-conf" style="color:${statusColor}">${c.best_confidence.toFixed(1)}</div>
+      <div class="match-cam">${esc(c.camera_id)} · Track ${c.track_id}</div>
+      <div class="match-meta">${esc(c.first_seen || '—')}</div>
+      <span class="badge-pill" style="color:${statusColor};background:${statusColor}1a">${statusLabel}</span>
+      ${faceRow}${kprRow}
+      <div class="match-meta">${esc(c.active_backbone)}</div>
     </div>`;
 }
 
-// ── XAI: "Why this score?" panel ────────────────────────────────────
-// Renders CandidateTrackOut.explanation (fusion breakdown + KPR part
-// evidence). Returns '' when absent (sessions stored before the XAI layer).
+function selectCandidate(idx) {
+  const route = State.lastRoute;
+  if (!route || !route.top_candidates?.length) return;
+  State.selectedCandidateIdx = idx;
+  document.querySelectorAll('.match-card').forEach(card =>
+    card.classList.toggle('selected', parseInt(card.dataset.idx) === idx)
+  );
+  renderWhyMatchPanel(route.top_candidates[idx]);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   XAI — "Why this match?" panel (mandatory, below results)
+   Renders CandidateTrackOut.explanation { fusion, kpr_evidence }.
+═══════════════════════════════════════════════════════════════════ */
 const XAI_SIGNAL_LABELS = { body: 'Body', kpr: 'KPR parts', face: 'Face' };
-const XAI_PART_STATUS   = {
-  used:            'compared',
-  below_threshold: 'not visible in both',
-  error:           'unusable',
-};
+const XAI_PART_STATUS = { used: 'compared', below_threshold: 'not visible in both', error: 'unusable' };
 
 function xaiPct(x) {
   return (typeof x === 'number' && isFinite(x)) ? `${(x * 100).toFixed(1)}%` : '—';
 }
-
 function xaiBar(value, color) {
   const w = Math.max(0, Math.min(1, typeof value === 'number' ? value : 0)) * 100;
   return `<div class="xai-bar"><div class="xai-bar-fill" style="width:${w.toFixed(1)}%;background:${color}"></div></div>`;
 }
 
 function renderFusionExplanation(f) {
-  if (!f) return '';
+  if (!f) return '<div class="empty-msg" style="padding:1rem">Fusion breakdown unavailable for this session.</div>';
   const signals = (f.signals || []).map(s => `
     <div class="xai-row">
       <span class="xai-label">${esc(XAI_SIGNAL_LABELS[s.signal] || s.signal)}</span>
-      ${xaiBar(s.contribution, s.contribution < 0 ? 'var(--red)' : 'var(--cyan)')}
-      <span class="xai-num" title="similarity ${xaiPct(s.similarity)} × weight ${xaiPct(s.normalized_weight)}">${s.contribution >= 0 ? '+' : ''}${xaiPct(s.contribution)}</span>
+      ${xaiBar(s.contribution, s.contribution < 0 ? PALETTE.error : PALETTE.burgundy)}
+      <span class="xai-num">${s.contribution >= 0 ? '+' : ''}${xaiPct(s.contribution)}</span>
     </div>
     <div class="xai-sub">sim ${xaiPct(s.similarity)} · weight ${xaiPct(s.normalized_weight)}</div>`).join('');
 
@@ -1036,11 +599,11 @@ function renderFusionExplanation(f) {
     `<div class="xai-sub">✕ ${esc(XAI_SIGNAL_LABELS[e.signal] || e.signal)}: ${esc(e.reason)}</div>`).join('');
 
   const margin = typeof f.margin_to_threshold === 'number' ? f.margin_to_threshold : null;
-  const marginColor = f.face_veto_applied ? 'var(--red)'
-                    : (margin !== null && margin >= 0 ? 'var(--green)' : 'var(--amber)');
+  const marginColor = f.face_veto_applied ? PALETTE.error
+    : (margin !== null && margin >= 0 ? PALETTE.success : PALETTE.warning);
 
   return `
-    <div class="xai-section">Score breakdown</div>
+    <div class="xai-section">Score breakdown (${esc(f.mode)})</div>
     ${signals}
     <div class="xai-row xai-total">
       <span class="xai-label">Fused</span>
@@ -1050,218 +613,91 @@ function renderFusionExplanation(f) {
     <div class="xai-sub">threshold ${xaiPct(f.no_match_threshold)} · margin
       <span style="color:${marginColor}">${margin !== null ? (margin >= 0 ? '+' : '') + xaiPct(margin) : '—'}</span></div>
     ${excluded}
-    <div class="xai-reason" style="border-color:${marginColor}">${esc(f.decision_reason)}</div>`;
+    <div class="xai-reason" style="border-left-color:${marginColor}">${esc(f.decision_reason)}</div>`;
 }
 
 function renderKprEvidence(k) {
   if (!k) return '';
   if (k.part_count_mismatch || k.fallback === 'holistic') {
-    return `
-      <div class="xai-section">Body parts (KPR)</div>
-      <div class="xai-sub">No body part visible in both images — whole-body KPR
-        embedding used instead (sim ${xaiPct(k.score)}).</div>`;
+    return `<div class="xai-section">Body parts (KPR)</div>
+      <div class="xai-sub">No body part visible in both images — whole-body KPR embedding used instead (sim ${xaiPct(k.score)}).</div>`;
   }
   if (k.fallback === 'zero') {
-    return `
-      <div class="xai-section">Body parts (KPR)</div>
+    return `<div class="xai-section">Body parts (KPR)</div>
       <div class="xai-sub">No comparable body parts — KPR contributed no signal.</div>`;
   }
-  // Part order follows the KPR model's part slots; semantic names are not
-  // confirmed, so parts are labelled by index.
   const parts = (k.parts || []).map(p => {
     const used = p.status === 'used';
-    return `
-      <div class="xai-row${used ? '' : ' xai-dim'}">
+    return `<div class="xai-row${used ? '' : ' xai-dim'}">
         <span class="xai-label">Part ${p.index + 1}</span>
-        ${xaiBar(used ? p.cosine : 0, 'var(--accent2)')}
+        ${xaiBar(used ? p.cosine : 0, PALETTE.info)}
         <span class="xai-num">${used ? xaiPct(p.cosine) : '—'}</span>
       </div>
-      <div class="xai-sub${used ? '' : ' xai-dim'}">${esc(XAI_PART_STATUS[p.status] || p.status)}
-        · vis ${xaiPct(p.vis_a)} / ${xaiPct(p.vis_b)}${used ? ` · share ${xaiPct(p.weight_share)}` : ''}</div>`;
+      <div class="xai-sub${used ? '' : ' xai-dim'}">${esc(XAI_PART_STATUS[p.status] || p.status)} · vis ${xaiPct(p.vis_a)} / ${xaiPct(p.vis_b)}${used ? ` · share ${xaiPct(p.weight_share)}` : ''}</div>`;
   }).join('');
-
-  return `
-    <div class="xai-section">Body parts (KPR) — ${k.num_mutually_visible} visible in both</div>
+  return `<div class="xai-section">Body parts (KPR) — ${k.num_mutually_visible} visible in both</div>
     ${parts}
     ${k.crop_path ? `<div class="xai-sub">best crop: ${esc(String(k.crop_path).split('/').pop())}</div>` : ''}`;
 }
 
-function renderExplanation(x) {
-  if (!x || (!x.fusion && !x.kpr_evidence)) return '';
-  return `
-    <details class="xai-panel">
-      <summary>Why this score?</summary>
-      ${renderFusionExplanation(x.fusion)}
-      ${renderKprEvidence(x.kpr_evidence)}
-      <div class="xai-note">Similarity evidence only — not an identity probability.</div>
-    </details>`;
+function renderWhyMatchPanel(c) {
+  const panel = document.getElementById('why-match-panel');
+  if (!c) { panel.innerHTML = ''; return; }
+  const x = c.explanation;
+  const hasExplanation = x && (x.fusion || x.kpr_evidence);
+
+  panel.innerHTML = `
+    <div class="xai-panel">
+      <div class="xai-panel-head">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7.5" stroke="currentColor" stroke-width="1.6"/><path d="M10 7v3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="10" cy="13" r="1" fill="currentColor"/></svg>
+        <h3>Why this match?</h3>
+        <span class="xai-target">${esc(c.camera_id)} · Track ${c.track_id} · ${c.best_confidence.toFixed(1)}% score</span>
+      </div>
+      <div class="xai-panel-body">
+        ${hasExplanation
+          ? `${renderFusionExplanation(x.fusion)}${renderKprEvidence(x.kpr_evidence)}
+             <div class="xai-note">Similarity evidence only — not an identity probability. Human verification is still required.</div>`
+          : `<div class="empty-msg" style="padding:1.5rem">Explanation unavailable for this candidate. This session was stored before the evidence layer, or no structured explanation was returned for this track.</div>`}
+      </div>
+    </div>`;
 }
 
 function renderCandidateMatchesShowcase() {
-  // Legacy entry point — called on view switch before any real query has run.
-  // Show an empty state rather than hardcoded demo data.
+  // No pre-loaded demo data; show a neutral empty state until a real query runs.
   const card = document.getElementById('query-result-card');
-  if (!card) return;
   const body = document.getElementById('query-result-body');
-  card.style.display = 'none';
-  if (body) body.innerHTML = '';
+  document.getElementById('why-match-panel').innerHTML = '';
+  if (!body) return;
+  body.innerHTML = `<div class="empty-msg">
+    <svg width="32" height="32" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="5.5" stroke="currentColor" stroke-width="1.4"/><path d="M14 14l3.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+    Submit a search to see candidate matches.<br/>No results are shown until a real query runs.
+  </div>`;
 }
 
 function showProgress()   { document.getElementById('query-progress-wrap').style.display = 'block'; }
 function hideProgress()   { document.getElementById('query-progress-wrap').style.display = 'none'; }
 function setProgressBar(pct, label) {
-  document.getElementById('query-progress-fill').style.width = pct + '%';
-  document.getElementById('query-progress-msg').textContent  = label;
+  const fill = document.getElementById('query-progress-fill');
+  const msg  = document.getElementById('query-progress-msg');
+  if (fill) fill.style.width = pct + '%';
+  if (msg)  msg.textContent  = label;
 }
 function enableQueryBtn() {
-  const btn    = document.getElementById('btn-submit-query');
+  const btn = document.getElementById('btn-submit-query');
   if (!btn) return;
   btn.disabled = false;
-  btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="5.5" stroke="currentColor" stroke-width="2"/><path d="M14 14l3.5 3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> Execute Re-ID Search`;
+  btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="5.5" stroke="currentColor" stroke-width="1.8"/><path d="M14 14l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg> Execute Search`;
 }
-
 function showQueryResult(txt, isError) {
-  const card = document.getElementById('query-result-card');
   const body = document.getElementById('query-result-body');
+  document.getElementById('why-match-panel').innerHTML = '';
   body.innerHTML = `<div class="result-banner ${isError ? 'error' : 'ok'}">${esc(txt)}</div>`;
-  card.style.display = 'block';
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   MAP & ROUTE RECONSTRUCTION
+   ROUTE RECONSTRUCTION — Google Maps based
 ═══════════════════════════════════════════════════════════════════ */
-function initMapSvg() {
-  const zonesEl = document.getElementById('map-zones');
-  const edgesEl = document.getElementById('map-edges');
-  const nodesEl = document.getElementById('map-nodes');
-  const pos     = CAM_LAYOUT;
-
-  if (!zonesEl && !edgesEl && !nodesEl) return;
-
-  const zones = [
-    { x: 45,  y: 95, w: 220, h: 170, label: 'ZONE A — ENTRANCE LOBBY' },
-    { x: 290, y: 95, w: 220, h: 170, label: 'ZONE B — CENTRAL CORRIDOR' },
-    { x: 535, y: 95, w: 220, h: 170, label: 'ZONE C — CANTEEN FACILITY' },
-  ];
-  zones.forEach(z => {
-    const rect = svgEl('rect', {
-      x: z.x, y: z.y, width: z.w, height: z.h, rx: 12,
-      fill: 'rgba(255,255,255,0.015)', stroke: '#334155', 'stroke-width': 1.2, 'stroke-dasharray': '6 4',
-    });
-    zonesEl.appendChild(rect);
-
-    const txt = svgEl('text', {
-      x: z.x + z.w / 2, y: z.y + z.h + 20,
-      'text-anchor': 'middle', fill: '#06b6d4', 'font-size': 9, 'font-family': 'JetBrains Mono, monospace', 'font-weight': 700,
-    });
-    txt.textContent = z.label;
-    zonesEl.appendChild(txt);
-  });
-
-  const edges = [
-    ['C01', 'C02', '~20s transit'],
-    ['C02', 'C03', '~30s transit'],
-  ];
-  edges.forEach(([a, b, label]) => {
-    const pa = pos[a], pb = pos[b];
-    const line = svgEl('line', {
-      x1: pa.x + 65, y1: pa.y,
-      x2: pb.x - 65, y2: pb.y,
-      class: 'graph-edge',
-    });
-    edgesEl.appendChild(line);
-
-    const mx = (pa.x + pb.x) / 2, my = pa.y - 22;
-    const bg = svgEl('rect', {
-      x: mx - 40, y: my - 12, width: 80, height: 20, rx: 4,
-      fill: '#0d1427', stroke: '#334155', 'stroke-width': 1,
-    });
-    const t = svgEl('text', {
-      x: mx, y: my + 3,
-      'text-anchor': 'middle', class: 'graph-edge-label',
-    });
-    t.textContent = label;
-    edgesEl.append(bg, t);
-  });
-
-  Object.entries(pos).forEach(([id, p]) => {
-    const g = svgEl('g', { class: 'cam-node', id: `cam-${id}` });
-    g.addEventListener('click', () => showCamDetail(id));
-
-    const pulse = svgEl('circle', { cx: p.x, cy: p.y, r: 50, class: 'cam-pulse' });
-    const bg = svgEl('rect', { x: p.x - 65, y: p.y - 40, width: 130, height: 80, rx: 12, class: 'cam-node-bg' });
-
-    const iconGroup = svgEl('g', { transform: `translate(${p.x - 40}, ${p.y - 12})` });
-    const iconRect  = svgEl('rect', { x: 0, y: 0, width: 22, height: 16, rx: 3, fill: 'none', stroke: '#06b6d4', 'stroke-width': 1.8 });
-    const iconTri   = svgEl('path', { d: 'M22 5l6-3v12l-6-3', fill: 'none', stroke: '#06b6d4', 'stroke-width': 1.8, 'stroke-linejoin': 'round' });
-    iconGroup.append(iconRect, iconTri);
-
-    const labelMain = svgEl('text', { x: p.x + 8, y: p.y - 10, class: 'cam-label-main', 'text-anchor': 'middle' });
-    labelMain.textContent = p.label;
-
-    const labelSub = svgEl('text', { x: p.x + 8, y: p.y + 12, class: 'cam-label-sub', 'text-anchor': 'middle' });
-    labelSub.textContent = p.loc;
-
-    const statusDot = svgEl('circle', { cx: p.x + 52, cy: p.y - 28, r: 5, fill: '#10b981', class: 'cam-status-dot' });
-
-    g.append(pulse, bg, iconGroup, labelMain, labelSub, statusDot);
-    nodesEl.appendChild(g);
-  });
-
-  const mapSel = document.getElementById('map-session-select');
-  mapSel?.addEventListener('change', () => {
-    const id = mapSel.value;
-    if (id && id !== 'demo-session') loadMapRoute(parseInt(id));
-    else loadDemoRoute();
-  });
-
-  document.getElementById('btn-load-map')?.addEventListener('click', () => {
-    const id = document.getElementById('map-session-select')?.value;
-    if (id && id !== 'demo-session') loadMapRoute(parseInt(id));
-    else loadDemoRoute();
-  });
-}
-
-function resetMapZoom() {
-  const map = document.getElementById('camera-map');
-  if (map) map.setAttribute('viewBox', '0 0 800 360');
-  toast('Map view reset', 'info');
-}
-
-function svgEl(tag, attrs) {
-  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
-  return el;
-}
-
-async function loadSessionSelect(selId) {
-  const sel = document.getElementById(selId);
-  if (!sel) return null;
-  const currentVal = sel.value;
-  try {
-    const sessions = await API.queries.list(50);
-    const done     = sessions.filter(s => s.status === 'done');
-    // Sort newest session first (highest ID first)
-    done.sort((a, b) => b.id - a.id);
-    if (!done.length) {
-      sel.innerHTML = '<option value="demo-session">Demo — Example Trajectory</option>';
-      return 'demo-session';
-    }
-    sel.innerHTML =
-      done.map(s => `<option value="${s.id}">Session #${s.id} — ${fmtTime(s.submitted_at)}</option>`).join('') +
-      '<option value="demo-session">Demo — Example Trajectory</option>';
-    // Retain previous user selection if still present in options, otherwise select newest session
-    if (currentVal && Array.from(sel.options).some(o => o.value === currentVal)) {
-      sel.value = currentVal;
-    } else {
-      sel.value = String(done[0].id);
-    }
-    return sel.value;
-  } catch {
-    sel.innerHTML = '<option value="demo-session">Session #1 — Demo Sighting Trajectory</option>';
-    return 'demo-session';
-  }
-}
+const RouteMap = { map: null, markers: [], polylines: [], initialized: false };
 
 async function loadMapRoute(sessionId) {
   try {
@@ -1270,533 +706,485 @@ async function loadMapRoute(sessionId) {
     if (sel && id && sel.value !== String(id)) sel.value = String(id);
     const route = await API.queries.route(id);
     State.lastRoute = route;
-    renderMapRoute(route);
+    await renderMapRoute(route);
   } catch (e) {
-    console.error('Failed to load map route:', e);
-    loadDemoRoute();
+    console.error('Failed to load route:', e);
+    renderMapRoute(null);
+    toast('Failed to load route: ' + e.message, 'error');
   }
 }
 
-function renderMapRoute(route) {
-  Object.keys(CAM_LAYOUT).forEach(id => {
-    const node = document.getElementById(`cam-${id}`);
-    if (node) node.className.baseVal = 'cam-node';
-  });
-  document.getElementById('map-route-path').innerHTML = '';
+async function ensureRouteGoogleMap() {
+  // Show the Google Maps container; hide config/empty states.
+  document.getElementById('route-google-map').style.display = 'block';
+  document.getElementById('route-map-config-state').style.display = 'none';
+  document.getElementById('route-map-empty-state').style.display = 'none';
 
-  const summaryCard = document.getElementById('map-route-summary');
-  const summaryBody = document.getElementById('map-route-summary-body');
-  let narrationEl = document.getElementById('map-route-narration');
-
-  if (!route.steps?.length) {
-    if (narrationEl) narrationEl.style.display = 'none';
-    if (summaryCard) summaryCard.style.display = 'block';
-    if (summaryBody) {
-      summaryBody.innerHTML = `
-        <div style="padding:1.5rem 1rem;text-align:center;color:var(--text-3);font-family:var(--font-mono);font-size:.85rem">
-          No trajectory steps to display for this session.<br>
-          <span style="font-size:.75rem;color:var(--text-4)">Decision: ${esc(route.match_decision || 'NO_CONFIDENT_MATCH')}</span>
-        </div>`;
-    }
-    toast('No trajectory steps to display', 'info');
-    return;
-  }
-
-  (route.sightings || []).forEach(s => highlightCamNode(s.camera_id, 'matched'));
-
-  const routeEl = document.getElementById('map-route-path');
-  const pos     = CAM_LAYOUT;
-
-  route.steps.forEach((step, i) => {
-    highlightCamNode(step.camera_id, 'active-step');
-    if (i > 0) {
-      const prev = route.steps[i - 1];
-      const pa   = pos[prev.camera_id], pb = pos[step.camera_id];
-      if (pa && pb) {
-        const line = svgEl('line', {
-          x1: pa.x + 65, y1: pa.y,
-          x2: pb.x - 65, y2: pb.y,
-          class: 'route-path',
-          'marker-end': 'url(#arrowhead)',
-        });
-        routeEl.appendChild(line);
-
-        // Animated laser particle moving along vector
-        const particle = svgEl('circle', {
-          r: 5, class: 'route-particle-glow'
-        });
-        const animX = svgEl('animate', {
-          attributeName: 'cx',
-          from: pa.x + 65, to: pb.x - 65,
-          dur: '1.6s', repeatCount: 'indefinite'
-        });
-        const animY = svgEl('animate', {
-          attributeName: 'cy',
-          from: pa.y, to: pb.y,
-          dur: '1.6s', repeatCount: 'indefinite'
-        });
-        particle.append(animX, animY);
-        routeEl.appendChild(particle);
-
-        const mx = (pa.x + pb.x) / 2, my = pa.y - 34;
-        const circle = svgEl('circle', { cx: mx, cy: my, r: 13, fill: '#6366f1', opacity: '.95' });
-        const num    = svgEl('text', {
-          x: mx, y: my + 4,
-          'text-anchor': 'middle', fill: 'white',
-          'font-size': 10, 'font-weight': 800,
-          'font-family': 'JetBrains Mono, monospace',
-        });
-        num.textContent = i + 1;
-        routeEl.append(circle, num);
-      }
-    }
-  });
-
-  // Grey out skipped cameras
-  (route.skipped_cameras || []).forEach(sc => {
-    const node = document.getElementById(`cam-${sc.camera_id}`);
-    if (node) node.setAttribute('class', 'cam-node skipped');
-  });
-
-  summaryCard.style.display = 'block';
-
-  // Inject narration element if not already in DOM
-  if (!narrationEl) {
-    narrationEl = document.createElement('div');
-    narrationEl.id = 'map-route-narration';
-    narrationEl.style.cssText = 'display:none;padding:.85rem 1.1rem;margin-bottom:1rem;border-radius:8px;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.35);font-size:.88rem;font-weight:700;color:#e0e0ff;line-height:1.5;font-family:var(--font-mono)';
-    summaryCard?.parentNode?.insertBefore(narrationEl, summaryCard);
-  }
-  if (route.narration) {
-    narrationEl.textContent = route.narration;
-    narrationEl.style.display = 'block';
-  } else {
-    narrationEl.style.display = 'none';
-  }
-
-  const cf  = (route.route_confidence * 100).toFixed(1);
-  const cfColor = parseFloat(cf) >= 70 ? 'var(--green)' : parseFloat(cf) >= 50 ? 'var(--amber)' : 'var(--red)';
-
-  const supportedCnt    = route.supported_transitions_count != null ? route.supported_transitions_count : route.steps.length;
-  const ambiguousCnt    = route.ambiguous_transitions_count || 0;
-  const disconnectedCnt = route.disconnected_transitions_count || 0;
-
-  summaryBody.innerHTML = `
-    <div style="margin-bottom:1rem">
-      <div class="section-label" style="font-family:var(--font-mono);font-size:.72rem;color:var(--cyan);font-weight:800">ROUTE EVIDENCE SCORE (MEAN FUSION)</div>
-      <div style="font-family:var(--font-heading);font-size:2.25rem;font-weight:900;color:${cfColor};letter-spacing:-.04em">${cf}%</div>
-      <div style="font-size:.7rem;color:var(--text-3);font-family:var(--font-mono);margin-top:.15rem">Similarity-derived score · Not a calibrated probability</div>
-      <div style="margin-top:.5rem">
-        <div class="progress-track">
-          <div class="progress-fill" style="width:${cf}%;background:${cfColor}"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Transition Status Breakdown Pills -->
-    <div style="display:flex;gap:.4rem;margin-bottom:.875rem;flex-wrap:wrap">
-      <span class="badge-pill" style="background:rgba(16,185,129,.15);color:var(--green);font-size:.72rem;font-family:var(--font-mono);font-weight:800">
-        ✓ ${supportedCnt} SUPPORTED
-      </span>
-      ${ambiguousCnt ? `
-      <span class="badge-pill" style="background:rgba(245,158,11,.15);color:var(--amber);font-size:.72rem;font-family:var(--font-mono);font-weight:800">
-        ⚠ ${ambiguousCnt} AMBIGUOUS
-      </span>` : ''}
-      ${disconnectedCnt ? `
-      <span class="badge-pill" style="background:rgba(239,68,68,.15);color:var(--red);font-size:.72rem;font-family:var(--font-mono);font-weight:800">
-        ✕ ${disconnectedCnt} DISCONNECTED
-      </span>` : ''}
-    </div>
-
-    ${route.data_limitations?.length ? `
-    <div style="padding:.65rem .85rem;margin-bottom:.875rem;border-radius:6px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);font-size:.76rem;color:#fcd34d;line-height:1.45">
-      <div style="font-weight:800;font-family:var(--font-mono);margin-bottom:.25rem;display:flex;align-items:center;gap:.35rem">
-        <svg width="12" height="12" viewBox="0 0 20 20" fill="none"><path d="M10 2L2 17h16L10 2z" stroke="currentColor" stroke-width="1.8"/><circle cx="10" cy="13" r="1" fill="currentColor"/></svg>
-        DATA LIMITATIONS REPORTED:
-      </div>
-      <ul style="margin:0 0 0 1rem;padding:0;list-style:disc">
-        ${route.data_limitations.map(lim => `<li>${esc(lim)}</li>`).join('')}
-      </ul>
-    </div>` : ''}
-
-    <div style="font-size:.85rem;color:var(--text-2);margin-bottom:1rem;font-weight:700">
-      ${route.total_cameras_matched} / ${Object.keys(CAM_LAYOUT).length} camera channels matched
-    </div>
-    <div class="section-label" style="font-family:var(--font-mono);font-size:.72rem;color:var(--cyan);margin-bottom:.5rem;font-weight:800">SEQUENCE STEPS</div>
-    <div style="display:flex;flex-direction:column;gap:.5rem">
-      ${route.steps.map((s, i) => {
-        const modeLabel = s.matching_mode === 'face' ? 'FACE' : s.matching_mode === 'body' ? 'BODY' : null;
-        const statusVal = s.transition_status || 'SUPPORTED';
-        const statusBg = statusVal === 'SUPPORTED' ? 'rgba(16,185,129,.15)'
-          : statusVal === 'AMBIGUOUS' ? 'rgba(245,158,11,.15)'
-          : statusVal === 'DISCONNECTED' ? 'rgba(239,68,68,.15)'
-          : 'rgba(6,182,212,.15)';
-        const statusColor = statusVal === 'SUPPORTED' ? 'var(--green)'
-          : statusVal === 'AMBIGUOUS' ? 'var(--amber)'
-          : statusVal === 'DISCONNECTED' ? 'var(--red)'
-          : 'var(--cyan)';
-
-        const expl = s.route_explanation || {};
-        const explSummary = expl.summary || '';
-
-        return `
-        <div style="padding:.55rem .75rem;border-radius:6px;background:rgba(255,255,255,0.05);border:1px solid var(--border)">
-          <div style="display:flex;align-items:center;gap:.6rem;font-size:.85rem">
-            <span style="background:var(--accent-grad);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:800;flex-shrink:0">${i + 1}</span>
-            <span style="color:#fff;font-weight:800;font-family:var(--font-heading)">${s.camera_id}</span>
-            <span style="color:var(--text-3);font-size:.75rem;font-family:var(--font-mono)">${s.timestamp || '—'}</span>
-            <span class="badge-pill" style="background:${statusBg};color:${statusColor};font-size:.65rem;font-family:var(--font-mono);font-weight:800">${statusVal}</span>
-            ${modeLabel ? `<span style="font-size:.68rem;color:var(--cyan);font-family:var(--font-mono);font-weight:800">${modeLabel}</span>` : ''}
-            <span class="badge-pill badge-poi" style="margin-left:auto">${(s.confidence || 0).toFixed(1)}%</span>
-          </div>
-
-          <!-- Geodesic distance & velocity info if available -->
-          ${s.hop_distance_m != null ? `
-          <div style="font-size:.72rem;color:var(--cyan);font-family:var(--font-mono);margin-top:.35rem;padding-left:1.8rem">
-            Geodesic: ${s.hop_distance_m.toFixed(1)}m ${s.implied_speed_mps != null ? `• Implied speed: ${s.implied_speed_mps.toFixed(1)} m/s` : ''}
-          </div>` : ''}
-
-          <!-- Explanation Summary & Toggle -->
-          ${explSummary ? `
-          <div style="margin-top:.4rem;padding-left:1.8rem">
-            <div style="font-size:.75rem;color:var(--text-2);line-height:1.45;background:rgba(0,0,0,0.2);padding:.4rem .6rem;border-radius:4px;border-left:2px solid ${statusColor}">
-              ${esc(explSummary)}
-            </div>
-            ${s.alternative_candidate ? `
-            <div style="font-size:.72rem;color:var(--amber);margin-top:.25rem">
-              ⚠ Alternative considered: ${esc(s.alternative_candidate.camera_id || '')} Track ${s.alternative_candidate.track_id} (score: ${s.alternative_candidate.fusion_score != null ? s.alternative_candidate.fusion_score.toFixed(3) : '—'})
-            </div>` : ''}
-          </div>` : ''}
-        </div>`;
-      }).join('')}
-    </div>
-    ${route.skipped_cameras?.length ? `
-    <div class="section-label" style="font-family:var(--font-mono);font-size:.72rem;color:var(--text-3);margin-top:1rem;margin-bottom:.5rem;font-weight:800">NO CONFIDENT MATCH</div>
-    <div style="display:flex;flex-direction:column;gap:.3rem">
-      ${route.skipped_cameras.map(sc => `
-        <div style="display:flex;align-items:center;gap:.6rem;font-size:.8rem;padding:.4rem .75rem;border-radius:6px;background:rgba(255,255,255,0.03);border:1px dashed var(--border);opacity:.6">
-          <span style="color:var(--text-3);font-weight:800;font-family:var(--font-heading)">${sc.camera_id}</span>
-          <span style="color:var(--text-3);font-size:.75rem">${sc.camera_location}</span>
-          <span style="margin-left:auto;font-size:.7rem;color:var(--text-3);font-family:var(--font-mono)">${sc.match_status || 'NO MATCH'}</span>
-        </div>`).join('')}
-    </div>` : ''}`;
-
-  // If in Google Maps view mode, render the route on Google Maps as well
-  if (RouteMap.mode === 'google') {
-    renderRouteOnGoogleMap(route);
-  }
-}
-
-/* ── Route Google Maps Integration ── */
-const RouteMap = {
-  map: null,
-  markers: [],
-  polylines: [],
-  mode: 'radar', // 'radar' | 'google'
-};
-
-async function toggleRouteMapMode() {
-  const btn = document.getElementById('btn-toggle-route-map');
-  const lbl = document.getElementById('lbl-route-map-mode');
-  const radarSvg = document.getElementById('camera-map');
-  const googleMapEl = document.getElementById('route-google-map');
-
-  if (RouteMap.mode === 'radar') {
-    RouteMap.mode = 'google';
-    if (lbl) lbl.textContent = 'Switch to Tactical Radar';
-    if (radarSvg) radarSvg.style.display = 'none';
-    if (googleMapEl) googleMapEl.style.display = 'block';
-
-    // Ensure Google Maps SDK is loaded
-    try {
-      await loadGoogleMapsForRoute();
-      if (!RouteMap.map) initRouteGoogleMap();
-      if (State.lastRoute) renderRouteOnGoogleMap(State.lastRoute);
-    } catch (e) {
-      toast('Failed to load Google Maps: ' + e.message, 'error');
-      toggleRouteMapMode(); // revert to radar
-    }
-  } else {
-    RouteMap.mode = 'radar';
-    if (lbl) lbl.textContent = 'Switch to Google Maps';
-    if (radarSvg) radarSvg.style.display = 'block';
-    if (googleMapEl) googleMapEl.style.display = 'none';
-  }
-}
-
-async function loadGoogleMapsForRoute() {
-  if (CamLoc.mapsLoaded) return;
-  const cfg = await API.cameras.getMapsConfig();
+  const cfg = await API.cameras.mapsConfig();   // ← fixed: was getMapsConfig()
   if (!cfg.configured || !cfg.google_maps_api_key) {
-    throw new Error('Google Maps API key not configured on backend.');
+    document.getElementById('route-google-map').style.display = 'none';
+    document.getElementById('route-map-config-state').style.display = 'flex';
+    return false;
   }
   await loadGoogleMapsScript(cfg.google_maps_api_key);
+  if (!RouteMap.map) initRouteGoogleMap();
+  return !!RouteMap.map;
 }
 
 function initRouteGoogleMap() {
   const container = document.getElementById('route-google-map');
   if (!container || !window.google?.maps) return;
-
+  const firstWithCoords = (CamLoc.cameras.length ? CamLoc.cameras : State.cameras)
+    .find(c => c.latitude != null && c.longitude != null);
+  const centre = firstWithCoords
+    ? { lat: firstWithCoords.latitude, lng: firstWithCoords.longitude }
+    : { lat: 30.7333, lng: 76.7794 };
   RouteMap.map = new google.maps.Map(container, {
-    center: { lat: 12.9716, lng: 77.5946 },
-    zoom: 16,
-    mapTypeId: 'roadmap',
-    styles: [
-      { elementType: 'geometry', stylers: [{ color: '#0d1427' }] },
-      { elementType: 'labels.text.fill', stylers: [{ color: '#8ec3b9' }] },
-      { elementType: 'labels.text.stroke', stylers: [{ color: '#1a3646' }] },
-      { featureType: 'administrative.country', elementType: 'geometry.stroke', stylers: [{ color: '#4b6878' }] },
-      { featureType: 'landscape.man_made', elementType: 'geometry.stroke', stylers: [{ color: '#334e87' }] },
-      { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#021019' }] },
-      { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#283d6a' }] },
-      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#304a7d' }] },
-      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e1626' }] },
-    ],
-    disableDefaultUI: false,
-    zoomControl: true,
+    center: centre, zoom: 16, mapTypeId: 'roadmap',
+    mapTypeControl: true, zoomControl: true, streetViewControl: false, fullscreenControl: true,
   });
+}
+
+async function renderMapRoute(route) {
+  const statusEl = document.getElementById('route-map-status');
+  const summaryBody = document.getElementById('map-route-summary-body');
+  const detailBody  = document.getElementById('map-detail-body');
+  const whyRoute    = document.getElementById('why-route-panel');
+
+  // Reset map overlays
+  RouteMap.markers.forEach(m => m.setMap(null)); RouteMap.markers = [];
+  RouteMap.polylines.forEach(p => p.setMap(null)); RouteMap.polylines = [];
+
+  if (!route || !route.steps?.length) {
+    if (statusEl) statusEl.textContent = route ? route.match_decision : 'No session';
+    if (summaryBody) summaryBody.innerHTML = `<div class="empty-msg">No route steps to display for this session.<br><span class="text-3">Decision: ${esc(route?.match_decision || 'NO_CONFIDENT_MATCH')}</span></div>`;
+    if (detailBody) detailBody.innerHTML = `<div class="empty-msg">Select a camera on the map or a route step to inspect its sighting details.</div>`;
+    if (whyRoute) whyRoute.innerHTML = '';
+    document.getElementById('route-google-map').style.display = 'none';
+    document.getElementById('route-map-config-state').style.display = 'none';
+    document.getElementById('route-map-empty-state').style.display = 'flex';
+    return;
+  }
+
+  if (statusEl) statusEl.textContent = `${route.total_cameras_matched} camera(s) · ${route.match_decision}`;
+
+  // Try to render on Google Maps
+  let mapReady = true;
+  try { mapReady = await ensureRouteGoogleMap(); }
+  catch (e) {
+    mapReady = false;
+    toast('Failed to load Google Maps: ' + e.message, 'error');
+  }
+  if (mapReady && RouteMap.map) renderRouteOnGoogleMap(route);
+  else {
+    document.getElementById('route-google-map').style.display = 'none';
+    if (document.getElementById('route-map-config-state').style.display === 'none')
+      document.getElementById('route-map-empty-state').style.display = 'flex';
+  }
+
+  // Route summary
+  renderRouteSummary(route);
+
+  // Why this route? panel
+  renderWhyRoutePanel(route);
+
+  // Reset inspector
+  if (detailBody) detailBody.innerHTML = `<div class="empty-msg">Select a camera marker or a route step to inspect its sighting details.</div>`;
+}
+
+function renderRouteSummary(route) {
+  const body = document.getElementById('map-route-summary-body');
+  const cf = (route.route_confidence * 100).toFixed(1);
+  const cfColor = parseFloat(cf) >= 70 ? PALETTE.success : parseFloat(cf) >= 50 ? PALETTE.warning : PALETTE.error;
+  const supported = route.supported_transitions_count ?? route.steps.length;
+  const ambiguous = route.ambiguous_transitions_count || 0;
+  const disconnected = route.disconnected_transitions_count || 0;
+
+  body.innerHTML = `
+    <div style="margin-bottom:14px">
+      <div class="section-label">Route evidence score (mean fusion)</div>
+      <div style="font-size:26px;font-weight:700;color:${cfColor};letter-spacing:-.03em">${cf}%</div>
+      <div class="field-hint">Similarity-derived score · not a calibrated probability</div>
+      <div class="progress-track mt-2"><div class="progress-fill" style="width:${cf}%;background:${cfColor}"></div></div>
+    </div>
+    <div class="flex gap-2" style="flex-wrap:wrap;margin-bottom:14px">
+      <span class="badge-pill badge-success">✓ ${supported} supported</span>
+      ${ambiguous ? `<span class="badge-pill" style="background:var(--warning-bg);color:var(--warning)">⚠ ${ambiguous} ambiguous</span>` : ''}
+      ${disconnected ? `<span class="badge-pill badge-danger">✕ ${disconnected} disconnected</span>` : ''}
+    </div>
+    ${route.data_limitations?.length ? `
+    <div class="result-banner warn" style="margin-bottom:14px">
+      <div class="rb-title">Data limitations</div>
+      <ul style="margin:6px 0 0 18px;padding:0;font-size:12px;color:var(--text-2)">
+        ${route.data_limitations.map(l => `<li>${esc(l)}</li>`).join('')}
+      </ul>
+    </div>` : ''}
+    <div style="font-size:12.5px;color:var(--text-2);margin-bottom:12px">${route.total_cameras_matched} / ${(State.cameras||[]).length || route.steps.length} cameras matched · method: <span class="mono">${esc(route.route_method)}</span></div>
+    ${renderRouteSteps(route)}`;
+}
+
+function renderRouteSteps(route) {
+  return `
+    <div class="section-label">Sequence steps</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      ${route.steps.map((s, i) => {
+        const statusVal = s.transition_status || 'SUPPORTED';
+        const badge = statusVal === 'SUPPORTED' ? 'badge-success'
+          : statusVal === 'AMBIGUOUS' ? 'badge-pill' : statusVal === 'DISCONNECTED' ? 'badge-danger' : 'badge-default';
+        const badgeColor = statusVal === 'SUPPORTED' ? PALETTE.success
+          : statusVal === 'AMBIGUOUS' ? PALETTE.warning
+          : statusVal === 'DISCONNECTED' ? PALETTE.error : PALETTE.info;
+        const modeLabel = s.matching_mode === 'face' ? 'FACE' : 'BODY';
+        return `<div style="padding:9px 11px;border:1px solid var(--border);border-radius:var(--r-sm);cursor:pointer" onclick="selectRouteStep(${i})" id="route-step-${i}">
+          <div class="flex items-center gap-2">
+            <span style="background:var(--burgundy);color:#fff;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">${i+1}</span>
+            <strong>${esc(s.camera_id)}</strong>
+            <span class="text-3 mono" style="font-size:11px">${esc(s.timestamp || '—')}</span>
+            <span class="badge-pill" style="color:${badgeColor};background:${badgeColor}1a;font-size:10px">${statusVal}</span>
+            <span class="mono" style="font-size:10px;color:var(--text-3)">${modeLabel}</span>
+            <span class="badge-pill badge-poi" style="margin-left:auto">${(s.confidence||0).toFixed(1)}%</span>
+          </div>
+          ${s.hop_distance_m != null ? `<div class="match-meta" style="padding-left:28px">Geodesic ${s.hop_distance_m.toFixed(1)}m${s.implied_speed_mps != null ? ` · implied ${s.implied_speed_mps.toFixed(1)} m/s` : ''}</div>` : ''}
+        </div>`;
+      }).join('')}
+    </div>
+    ${route.skipped_cameras?.length ? `
+    <div class="section-label" style="margin-top:12px">No confident match</div>
+    <div style="display:flex;flex-direction:column;gap:5px">
+      ${route.skipped_cameras.map(sc => `<div class="flex items-center gap-2" style="font-size:12px;padding:6px 9px;border:1px dashed var(--border);border-radius:var(--r-sm);opacity:.7">
+        <strong class="text-3">${esc(sc.camera_id)}</strong><span class="text-3">${esc(sc.camera_location)}</span>
+        <span class="mono text-3" style="margin-left:auto;font-size:10px">${esc(sc.match_status || 'NO MATCH')}</span></div>`).join('')}
+    </div>` : ''}`;
+}
+
+function selectRouteStep(i) {
+  const route = State.lastRoute;
+  if (!route?.steps?.[i]) return;
+  showCamDetail(route.steps[i].camera_id);
+  document.querySelectorAll('[id^="route-step-"]').forEach(el => el.style.borderColor = 'var(--border)');
+  const el = document.getElementById(`route-step-${i}`);
+  if (el) el.style.borderColor = 'var(--burgundy)';
 }
 
 function renderRouteOnGoogleMap(route) {
   if (!RouteMap.map || !window.google?.maps) return;
-
-  // Clear previous markers and polylines
-  RouteMap.markers.forEach(m => m.setMap(null));
-  RouteMap.markers = [];
-  RouteMap.polylines.forEach(p => p.setMap(null));
-  RouteMap.polylines = [];
-
-  if (!route?.steps?.length) return;
-
-  const cameras = CamLoc.cameras || State.cameras || [];
+  const cameras = CamLoc.cameras.length ? CamLoc.cameras : State.cameras;
   const camCoordMap = {};
   cameras.forEach(c => {
-    if (c.latitude != null && c.longitude != null) {
+    if (c.latitude != null && c.longitude != null)
       camCoordMap[c.id] = { lat: c.latitude, lng: c.longitude, location: c.location || c.id };
-    }
   });
 
   const pathCoords = [];
   const bounds = new google.maps.LatLngBounds();
   let coordsFound = false;
+  const missing = [];
 
   route.steps.forEach((step, idx) => {
     const coord = camCoordMap[step.camera_id];
-    if (!coord) return;
-
+    if (!coord) { missing.push(step.camera_id); return; }
     coordsFound = true;
     const pos = { lat: coord.lat, lng: coord.lng };
-    pathCoords.push(pos);
-    bounds.extend(pos);
+    pathCoords.push(pos); bounds.extend(pos);
 
     const statusVal = step.transition_status || 'SUPPORTED';
-    const pinColor = statusVal === 'SUPPORTED' ? '#10b981'
-      : statusVal === 'AMBIGUOUS' ? '#f59e0b'
-      : statusVal === 'DISCONNECTED' ? '#ef4444'
-      : '#06b6d4';
+    const pinColor = statusVal === 'SUPPORTED' ? PALETTE.success
+      : statusVal === 'AMBIGUOUS' ? PALETTE.warning
+      : statusVal === 'DISCONNECTED' ? PALETTE.error : PALETTE.info;
 
     const marker = new google.maps.Marker({
-      position: pos,
-      map: RouteMap.map,
-      title: `${idx + 1}. ${step.camera_id} (${coord.location})`,
-      label: {
-        text: String(idx + 1),
-        color: '#ffffff',
-        fontWeight: 'bold',
-        fontSize: '12px',
-      },
-      icon: {
-        path: google.maps.SymbolPath.CIRCLE,
-        scale: 14,
-        fillColor: pinColor,
-        fillOpacity: 0.95,
-        strokeColor: '#ffffff',
-        strokeWeight: 2,
-      },
+      position: pos, map: RouteMap.map,
+      title: `${idx+1}. ${step.camera_id} (${coord.location})`,
+      label: { text: String(idx+1), color: '#fff', fontWeight: 'bold', fontSize: '12px' },
+      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 14, fillColor: pinColor, fillOpacity: .95, strokeColor: '#fff', strokeWeight: 2 },
     });
-
-    const infoContent = `
-      <div style="color:#000;font-family:sans-serif;max-width:260px;font-size:12px;line-height:1.4">
-        <div style="font-weight:bold;font-size:14px;color:#1e293b;margin-bottom:4px">
-          Step ${idx + 1}: ${esc(step.camera_id)} (${esc(coord.location)})
-        </div>
-        <div><strong>Status:</strong> <span style="color:${pinColor};font-weight:bold">${statusVal}</span></div>
-        <div><strong>Timestamp:</strong> ${esc(step.timestamp || '—')}</div>
-        <div><strong>Confidence:</strong> ${(step.confidence || 0).toFixed(1)}%</div>
-        ${step.hop_distance_m != null ? `<div><strong>Distance:</strong> ${step.hop_distance_m.toFixed(1)} m</div>` : ''}
-        ${step.implied_speed_mps != null ? `<div><strong>Speed:</strong> ${step.implied_speed_mps.toFixed(1)} m/s</div>` : ''}
-        ${step.route_explanation?.summary ? `<div style="margin-top:6px;font-size:11px;color:#475569;border-top:1px solid #cbd5e1;padding-top:4px">${esc(step.route_explanation.summary)}</div>` : ''}
-      </div>`;
-
+    const infoContent = `<div style="font-family:Inter,sans-serif;max-width:260px;font-size:12px;line-height:1.4">
+      <div style="font-weight:700;font-size:13px;margin-bottom:4px">Step ${idx+1}: ${esc(step.camera_id)} (${esc(coord.location)})</div>
+      <div><strong>Status:</strong> <span style="color:${pinColor};font-weight:700">${statusVal}</span></div>
+      <div><strong>Timestamp:</strong> ${esc(step.timestamp || '—')}</div>
+      <div><strong>Match score:</strong> ${(step.confidence||0).toFixed(1)}%</div>
+      ${step.hop_distance_m != null ? `<div><strong>Distance:</strong> ${step.hop_distance_m.toFixed(1)} m</div>` : ''}
+      ${step.implied_speed_mps != null ? `<div><strong>Speed:</strong> ${step.implied_speed_mps.toFixed(1)} m/s</div>` : ''}
+      ${step.route_explanation?.summary ? `<div style="margin-top:6px;font-size:11px;color:#475569;border-top:1px solid #e5ded2;padding-top:4px">${esc(step.route_explanation.summary)}</div>` : ''}
+    </div>`;
     const infoWindow = new google.maps.InfoWindow({ content: infoContent });
-    marker.addListener('click', () => infoWindow.open(RouteMap.map, marker));
+    marker.addListener('click', () => { infoWindow.open(RouteMap.map, marker); showCamDetail(step.camera_id); });
     RouteMap.markers.push(marker);
   });
 
   if (coordsFound && pathCoords.length >= 2) {
-    // Draw vector route polyline with directional arrows
-    const polyline = new google.maps.Polyline({
-      path: pathCoords,
-      geodesic: true,
-      strokeColor: '#06b6d4',
-      strokeOpacity: 0.85,
-      strokeWeight: 3.5,
-      icons: [{
-        icon: {
-          path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-          scale: 3,
-          strokeColor: '#06b6d4',
-          fillColor: '#06b6d4',
-          fillOpacity: 1.0,
-        },
-        offset: '50%',
-      }],
+    RouteMap.polylines.push(new google.maps.Polyline({
+      path: pathCoords, geodesic: true,
+      strokeColor: PALETTE.burgundy, strokeOpacity: .85, strokeWeight: 3.5,
+      icons: [{ icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 3, strokeColor: PALETTE.burgundy, fillColor: PALETTE.burgundy, fillOpacity: 1 }, offset: '50%' }],
       map: RouteMap.map,
-    });
-    RouteMap.polylines.push(polyline);
+    }));
     RouteMap.map.fitBounds(bounds);
   } else if (!coordsFound) {
-    toast('Camera GPS coordinates are not configured for route cameras. Set coordinates in Camera Manager.', 'info');
+    toast('Camera GPS coordinates are not configured for route cameras. Set coordinates in Camera Locations.', 'info');
   }
-}
-
-function highlightCamNode(id, cls) {
-  const node = document.getElementById(`cam-${id}`);
-  if (!node) return;
-  const current = node.className.baseVal || node.getAttribute('class') || 'cam-node';
-  if (!current.includes(cls)) {
-    node.setAttribute('class', current + ' ' + cls);
+  if (missing.length) {
+    route.steps.forEach((step, idx) => {
+      if (!camCoordMap[step.camera_id]) {
+        toast(`Cannot place ${step.camera_id} on map — no GPS coordinates set.`, 'info');
+      }
+    });
   }
 }
 
 function showCamDetail(id) {
   const titleEl = document.getElementById('map-detail-title');
   const bodyEl  = document.getElementById('map-detail-body');
-  const pos     = CAM_LAYOUT[id];
+  const route = State.lastRoute;
+  if (!route) { if (bodyEl) bodyEl.innerHTML = `<div class="empty-msg">No route loaded.</div>`; return; }
 
-  titleEl.innerHTML = `
-    <svg width="14" height="14" viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M15 9l3.5-2v6L15 11" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
-    ${id} — ${pos?.loc || id}`;
+  const s = route.sightings?.find(x => x.camera_id === id);
+  const step = route.steps?.find(x => x.camera_id === id);
 
-  const route = State.lastRoute || MOCK_DEMO_ROUTE;
-  const s = route.sightings?.find(x => x.camera_id === id) || { track_id: '—', first_seen: '—', last_seen: '—', appearance_score: 0, spatial_score: 0, temporal_score: 0, fusion_score: 0, best_confidence: 0, match_status: 'NO_USABLE_EVIDENCE' };
-  const step = route.steps?.find(x => x.camera_id === id) || { step_order: 0 };
+  if (titleEl) titleEl.innerHTML = `<svg viewBox="0 0 20 20" fill="none" style="width:16px;height:16px"><rect x="2" y="5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M15 9l3.5-2v6L15 11" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg> ${esc(id)} — ${esc(camLocation(id))}`;
 
-  // Phase 4: face-first mode badge
-  const modeLabel = s.matching_mode === 'face' ? 'FACE MATCH' : s.matching_mode === 'body' ? 'BODY RE-ID' : null;
-  const modeColor = s.matching_mode === 'face' ? 'var(--green)' : 'var(--cyan)';
-  const modeBadge = modeLabel
-    ? `<span style="font-size:.72rem;padding:.25rem .6rem;border-radius:99px;background:rgba(255,255,255,0.07);color:${modeColor};font-family:var(--font-mono);font-weight:800;margin-left:.4rem">${modeLabel}</span>`
-    : '';
+  if (!s) {
+    bodyEl.innerHTML = `<div class="empty-msg">No sighting recorded for ${esc(id)} on this route.</div>`;
+    return;
+  }
 
-  const cropUrl = s.crop_path
-    ? `/crops/${s.crop_path.replace(/\\/g, '/').split('/crops/').pop()}`
-    : null;
+  const cropUrl = s.crop_path ? `/crops/${s.crop_path.replace(/\\/g, '/').split('/crops/').pop()}` : null;
+  const modeBadge = s.matching_mode === 'face'
+    ? `<span class="badge-pill badge-poi">FACE</span>` : `<span class="badge-pill badge-default">BODY</span>`;
 
   bodyEl.innerHTML = `
-    <div style="display:flex;gap:.9rem;margin-bottom:1.1rem;align-items:center">
-      <div style="width:68px;height:100px;background:var(--surface3);border-radius:6px;border:1.5px solid var(--cyan);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
-        ${cropUrl
-          ? `<img src="${esc(cropUrl)}" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.innerHTML='👤'" />`
-          : '<span style="font-size:2.2rem">👤</span>'}
+    <div class="flex gap-2" style="margin-bottom:14px;align-items:center">
+      <div style="width:64px;height:96px;background:var(--muted);border-radius:var(--r-sm);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;font-size:1.8rem;color:var(--text-3)">
+        ${cropUrl ? `<img src="${esc(cropUrl)}" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.textContent='👤'"/>` : '👤'}
       </div>
       <div style="min-width:0">
-        <div style="font-size:.85rem;color:var(--text-2)">Track ID: <strong style="color:#fff;font-family:var(--font-mono)">#${s.track_id}</strong></div>
-        <div style="font-size:.8rem;color:var(--text-2);margin-top:.25rem">First seen: <strong style="color:#fff;font-family:var(--font-mono)">${s.first_seen || '—'}</strong></div>
-        <div style="font-size:.8rem;color:var(--text-2);margin-top:.1rem">Last seen: <strong style="color:#fff;font-family:var(--font-mono)">${s.last_seen || '—'}</strong></div>
-        <div style="font-size:.78rem;color:var(--cyan);margin-top:.4rem;font-family:var(--font-mono);font-weight:700">Sequence Order: ${step.step_order + 1}</div>
+        <div style="font-size:12.5px;color:var(--text-2)">Track <strong class="mono">#${s.track_id}</strong></div>
+        <div style="font-size:12px;color:var(--text-2);margin-top:3px">First seen: <strong class="mono">${esc(s.first_seen || '—')}</strong></div>
+        <div style="font-size:12px;color:var(--text-2)">Last seen: <strong class="mono">${esc(s.last_seen || '—')}</strong></div>
+        <div style="font-size:11.5px;color:var(--burgundy);margin-top:4px;font-weight:600">Sequence order: ${(step?.step_order ?? 0) + 1}</div>
       </div>
     </div>
-    <div style="margin-bottom:1.1rem">
+    <div style="margin-bottom:12px">
       ${scoreBar('Identity', s.identity_score ?? s.appearance_score)}
-      ${s.matching_mode === 'face' && s.face_similarity != null ? scoreBar('Face Sim', s.face_similarity) : ''}
-      ${s.matching_mode !== 'face' ? scoreBar('Body Sim', s.body_similarity ?? s.appearance_score) : ''}
-      ${scoreBar('Spatial',    s.spatial_score)}
-      ${scoreBar('Temporal',   s.temporal_score)}
-      ${scoreBar('Fusion',     s.fusion_score)}
+      ${s.matching_mode === 'face' && s.face_similarity != null ? scoreBar('Face sim', s.face_similarity) : ''}
+      ${s.matching_mode !== 'face' ? scoreBar('Body sim', s.body_similarity ?? s.appearance_score) : ''}
+      ${scoreBar('Spatial', s.spatial_score)}
+      ${scoreBar('Temporal', s.temporal_score)}
+      ${scoreBar('Fusion', s.fusion_score)}
     </div>
-    <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+    <div class="flex gap-2" style="flex-wrap:wrap;align-items:center">
       <span class="badge-pill badge-poi">${(s.best_confidence||0).toFixed(1)} match score</span>
-      <span class="chip chip-${(s.match_status||'').toLowerCase().replace('_','-') || 'done'}">${(s.match_status||'CANDIDATE').replace(/_/g,' ')}</span>
+      <span class="chip chip-${(s.match_status||'').toLowerCase().replace('_','-') || 'done'}">${esc((s.match_status||'CANDIDATE').replace(/_/g,' '))}</span>
       ${modeBadge}
     </div>`;
 }
 
 function scoreBar(name, val) {
   const pct = (val != null ? val * 100 : 0).toFixed(1);
-  const color = parseFloat(pct) >= 70 ? 'var(--green)' : parseFloat(pct) >= 50 ? 'var(--amber)' : 'var(--red)';
-  return `
-    <div style="display:flex;align-items:center;gap:.65rem;margin-bottom:.6rem">
-      <div style="font-size:.78rem;color:var(--text-2);width:85px;flex-shrink:0;font-weight:700">${name}</div>
-      <div class="progress-track" style="flex:1;height:6px">
-        <div class="progress-fill" style="width:${pct}%;background:${color}"></div>
-      </div>
-      <div style="font-family:var(--font-mono);font-size:.75rem;color:${color};font-weight:800">${pct}%</div>
-    </div>`;
+  const color = parseFloat(pct) >= 70 ? PALETTE.success : parseFloat(pct) >= 50 ? PALETTE.warning : PALETTE.error;
+  return `<div class="score-bar-row">
+    <div class="sbr-name">${esc(name)}</div>
+    <div class="progress-track" style="flex:1"><div class="progress-fill" style="width:${pct}%;background:${color}"></div></div>
+    <div class="sbr-val" style="color:${color}">${pct}%</div>
+  </div>`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   TIMELINE VIEW
+   XAI — "Why this route?" panel (mandatory, below map + summary)
+   Renders per-step route_explanation + route-level metrics.
+═══════════════════════════════════════════════════════════════════ */
+function renderWhyRoutePanel(route) {
+  const panel = document.getElementById('why-route-panel');
+  const steps = route.steps || [];
+  const hasAny = steps.some(s => s.route_explanation) || route.narration || (route.data_limitations?.length);
+
+  const stepBlocks = steps.map((s, i) => {
+    const ex = s.route_explanation || {};
+    const statusVal = s.transition_status || 'SUPPORTED';
+    const statusColor = statusVal === 'SUPPORTED' ? PALETTE.success
+      : statusVal === 'AMBIGUOUS' ? PALETTE.warning
+      : statusVal === 'DISCONNECTED' ? PALETTE.error : PALETTE.info;
+
+    let evidenceBoxes = '';
+    if (ex.topological_evidence) {
+      const t = ex.topological_evidence;
+      evidenceBoxes += xaiEvidenceBox('Topological', [
+        ['Edge exists', t.edge_exists != null ? (t.edge_exists ? 'Yes' : 'No') : '—'],
+        ['Hop count', t.hop_count ?? '—'],
+        ['Expected transit', t.expected_transit_sec != null ? `${t.expected_transit_sec}s` : '—'],
+        ['Topology score', t.topology_score != null ? t.topology_score.toFixed(3) : '—'],
+      ]);
+    }
+    if (ex.temporal_evidence) {
+      const t = ex.temporal_evidence;
+      evidenceBoxes += xaiEvidenceBox('Temporal', [
+        ['Has timestamps', t.has_timestamps != null ? (t.has_timestamps ? 'Yes' : 'No') : '—'],
+        ['Observed gap', t.observed_gap_sec != null ? `${t.observed_gap_sec.toFixed(1)}s` : '—'],
+        ['Expected transit', t.expected_transit_sec != null ? `${t.expected_transit_sec}s` : '—'],
+        ['Temporal score', t.temporal_score != null ? t.temporal_score.toFixed(3) : '—'],
+      ]);
+    }
+    if (ex.appearance_evidence) {
+      const a = ex.appearance_evidence;
+      evidenceBoxes += xaiEvidenceBox('Appearance', [
+        ['Appearance score', a.appearance_score != null ? a.appearance_score.toFixed(3) : '—'],
+        ['Match score', a.confidence != null ? `${a.confidence.toFixed(1)}%` : '—'],
+        ['Backbone', a.backbone || '—'],
+      ]);
+    }
+    if (ex.spatial_evidence) {
+      const sp = ex.spatial_evidence;
+      evidenceBoxes += xaiEvidenceBox('Spatial', [
+        ['Coordinates available', sp.coordinates_available != null ? (sp.coordinates_available ? 'Yes' : 'No') : '—'],
+        ['Distance', sp.distance_meters != null ? `${sp.distance_meters.toFixed(1)} m` : '—'],
+        ['Implied speed', sp.implied_speed_mps != null ? `${sp.implied_speed_mps.toFixed(1)} m/s` : '—'],
+        ['Speed valid', sp.speed_valid != null ? (sp.speed_valid ? 'Yes' : 'No') : '—'],
+      ]);
+    }
+    const missing = (ex.missing_constraints || []).map(m => `<div class="xai-missing">• ${esc(m)}</div>`).join('');
+    const alt = s.alternative_candidate ? `<div class="xai-alt">Alternative considered: ${esc(s.alternative_candidate.camera_id || '')} Track ${s.alternative_candidate.track_id} (score ${s.alternative_candidate.fusion_score != null ? s.alternative_candidate.fusion_score.toFixed(3) : '—'})</div>` : '';
+
+    return `
+      <div class="xai-step" id="why-route-step-${i}">
+        <div class="xai-step-head" onclick="toggleXaiStep(${i})">
+          <div class="xai-step-num">${i+1}</div>
+          <div class="xai-step-title">${esc(s.camera_id)} — ${esc(camLocation(s.camera_id))} <span style="color:var(--text-3);font-weight:400;font-size:11.5px">· ${esc(s.timestamp || '—')}</span></div>
+          <span class="badge-pill" style="color:${statusColor};background:${statusColor}1a;margin-left:auto">${statusVal}</span>
+          <svg class="xai-step-chevron" width="14" height="14" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <div class="xai-step-body">
+          ${ex.summary ? `<div class="xai-reason" style="border-left-color:${statusColor}">${esc(ex.summary)}</div>` : '<div class="xai-sub">No structured explanation returned for this step.</div>'}
+          ${evidenceBoxes ? `<div class="xai-evidence-grid mt-3">${evidenceBoxes}</div>` : ''}
+          ${missing}
+          ${alt}
+        </div>
+      </div>`;
+  }).join('');
+
+  const transitionCounts = `
+    <div class="flex gap-2" style="flex-wrap:wrap">
+      <span class="badge-pill badge-success">✓ ${route.supported_transitions_count ?? 0} supported</span>
+      ${route.ambiguous_transitions_count ? `<span class="badge-pill" style="background:var(--warning-bg);color:var(--warning)">⚠ ${route.ambiguous_transitions_count} ambiguous</span>` : ''}
+      ${route.disconnected_transitions_count ? `<span class="badge-pill badge-danger">✕ ${route.disconnected_transitions_count} disconnected</span>` : ''}
+    </div>`;
+
+  panel.innerHTML = `
+    <div class="xai-panel">
+      <div class="xai-panel-head">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M3 5l5-2 4 2 5-2v12l-5 2-4-2-5 2V5z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        <h3>Why this route?</h3>
+        <span class="xai-target">method: ${esc(route.route_method)} · ${route.total_cameras_matched} camera(s)</span>
+      </div>
+      <div class="xai-panel-body">
+        ${route.narration ? `<div class="xai-reason" style="border-left-color:${PALETTE.info}">${esc(route.narration)}</div>` : ''}
+        ${transitionCounts}
+        <div class="xai-section">Per-step transition evidence</div>
+        ${hasAny ? stepBlocks : '<div class="empty-msg" style="padding:1.5rem">No structured route explanation was returned for this session.</div>'}
+        ${route.data_limitations?.length ? `<div class="xai-section">Data limitations</div><ul style="margin:0 0 0 18px;padding:0;color:var(--text-2);font-size:12px">${route.data_limitations.map(l => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}
+        <div class="xai-note">Evidence is descriptive of how the route was scored; it does not certify identity. Human verification is required.</div>
+      </div>
+    </div>`;
+  // Open first step by default
+  if (steps.length) toggleXaiStep(0);
+}
+
+function xaiEvidenceBox(title, rows) {
+  return `<div class="xai-evidence-box">
+    <div class="eb-title">${esc(title)}</div>
+    ${rows.map(([k, v]) => `<div class="eb-row"><span class="eb-k">${esc(k)}</span><span class="mono">${esc(String(v))}</span></div>`).join('')}
+  </div>`;
+}
+
+function toggleXaiStep(i) {
+  const el = document.getElementById(`why-route-step-${i}`);
+  if (!el) return;
+  el.classList.toggle('open');
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SESSION SELECTORS (no demo option)
+═══════════════════════════════════════════════════════════════════ */
+async function loadSessionSelect(selId) {
+  const sel = document.getElementById(selId);
+  if (!sel) return null;
+  const currentVal = sel.value;
+  try {
+    const sessions = await API.queries.list(50);
+    const done = sessions.filter(s => s.status === 'done').sort((a, b) => b.id - a.id);
+    if (!done.length) {
+      sel.innerHTML = '<option value="">No completed sessions</option>';
+      return null;
+    }
+    sel.innerHTML = done.map(s => `<option value="${s.id}">Session #${s.id} — ${fmtTime(s.submitted_at)}</option>`).join('');
+    if (currentVal && Array.from(sel.options).some(o => o.value === currentVal)) sel.value = currentVal;
+    else sel.value = String(done[0].id);
+    return sel.value;
+  } catch {
+    sel.innerHTML = '<option value="">Unable to load sessions</option>';
+    return null;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SIGHTING TIMELINE
 ═══════════════════════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
   const tlSel = document.getElementById('timeline-session-select');
-  tlSel?.addEventListener('change', () => {
-    const val = tlSel.value;
-    renderTimeline(val);
-  });
+  tlSel?.addEventListener('change', () => renderTimeline(tlSel.value));
   document.getElementById('btn-load-timeline')?.addEventListener('click', () => {
-    const val = document.getElementById('timeline-session-select')?.value;
-    renderTimeline(val);
+    renderTimeline(document.getElementById('timeline-session-select')?.value);
+  });
+  document.getElementById('btn-load-map')?.addEventListener('click', () => {
+    const id = document.getElementById('map-session-select')?.value;
+    if (id) loadMapRoute(parseInt(id)); else renderMapRoute(null);
+  });
+  document.getElementById('map-session-select')?.addEventListener('change', () => {
+    const id = document.getElementById('map-session-select')?.value;
+    if (id) loadMapRoute(parseInt(id)); else renderMapRoute(null);
   });
 });
 
 async function renderTimeline(requestedSessionId) {
   const container = document.getElementById('timeline-container');
+  const candEl = document.getElementById('timeline-candidates');
   if (!container) return;
 
   const selEl = document.getElementById('timeline-session-select');
-  let val = requestedSessionId !== undefined ? String(requestedSessionId) : (selEl ? selEl.value : '');
+  let val = requestedSessionId !== undefined && requestedSessionId !== null && requestedSessionId !== ''
+    ? String(requestedSessionId) : (selEl ? selEl.value : '');
+  if (selEl && val && selEl.value !== val) selEl.value = val;
 
-  // Synchronize select element value if passed explicitly
-  if (selEl && val && selEl.value !== val) {
-    selEl.value = val;
-  }
-
-  // Determine which route to display
   let route = null;
-  if (val === 'demo-session') {
-    route = MOCK_DEMO_ROUTE;
-  } else if (val) {
+  if (val) {
     const sid = parseInt(val);
     if (!isNaN(sid)) {
-      try {
-        route = await API.queries.route(sid);
-        State.lastRoute = route;
-      } catch (e) {
-        console.warn('Failed to load session route for timeline:', e);
-        route = MOCK_DEMO_ROUTE;
-      }
+      try { route = await API.queries.route(sid); State.lastRoute = route; }
+      catch (e) { console.warn('Timeline route load failed:', e); }
     }
   }
 
-  if (!route) {
-    route = State.lastRoute || MOCK_DEMO_ROUTE;
+  if (candEl) {
+    if (route?.top_candidates?.length) {
+      candEl.innerHTML = `<div class="matches-grid">${route.top_candidates.map((c, i) => renderCandidateCard(c, i)).join('')}</div>`;
+      candEl.querySelectorAll('.match-card').forEach(card =>
+        card.addEventListener('click', () => { State.lastRoute = route; selectCandidate(parseInt(card.dataset.idx)); }));
+    } else {
+      candEl.innerHTML = `<div class="empty-msg">No candidate snapshots for this session.</div>`;
+    }
   }
 
   if (!route?.steps?.length) {
-    container.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--text-3);font-family:var(--font-mono);font-size:.85rem">No route data — run a query or select a completed session above.</div>`;
+    container.innerHTML = `<div class="empty-msg">No sightings for this session. Run a query first.</div>`;
     return;
   }
 
-  // Parse "HH:MM:SS.ff" → seconds since midnight
   function tsToSec(ts) {
     if (!ts) return null;
     const parts = ts.split(':');
     if (parts.length < 3) return null;
     const [h, m] = [parseInt(parts[0]), parseInt(parts[1])];
     const sp = parts[2].split('.');
-    const s = parseInt(sp[0]), cs = sp[1] ? parseInt(sp[1]) : 0;
-    return h * 3600 + m * 60 + s + cs / 100;
+    return h * 3600 + m * 60 + parseInt(sp[0]) + (sp[1] ? parseInt(sp[1]) / 100 : 0);
   }
 
   const stepsWithTime = route.steps.map(s => ({ ...s, _sec: tsToSec(s.timestamp) }));
@@ -1804,111 +1192,48 @@ async function renderTimeline(requestedSessionId) {
   const minSec = validSecs.length ? Math.min(...validSecs) - 30 : 0;
   const maxSec = validSecs.length ? Math.max(...validSecs) + 30 : 60;
   const span = maxSec - minSec || 60;
-
-  function secToPos(sec) { return ((sec - minSec) / span * 100).toFixed(2) + '%'; }
-  function fmtSec(sec) {
+  const secToPos = sec => ((sec - minSec) / span * 100).toFixed(2) + '%';
+  const fmtSec = sec => {
     if (sec === null) return '—';
     const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60);
     return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-  }
+  };
 
-  // Tick marks — 5 evenly spaced
-  const ticks = Array.from({length: 5}, (_, i) => minSec + (span / 4) * i);
+  const ticks = Array.from({ length: 5 }, (_, i) => minSec + (span / 4) * i);
   const ticksHtml = ticks.map(t => `<span>${fmtSec(t)}</span>`).join('');
 
-  // All cameras: matched (from steps) + skipped
-  const skippedRows = (route.skipped_cameras || []).map(sc => ({
-    camera_id: sc.camera_id,
-    camera_location: sc.camera_location,
-    _sec: null,
-    _skipped: true,
-    match_status: sc.match_status,
-  }));
+  const skippedRows = (route.skipped_cameras || []).map(sc => ({ camera_id: sc.camera_id, camera_location: sc.camera_location, _sec: null, _skipped: true, match_status: sc.match_status }));
   const allRows = [...stepsWithTime, ...skippedRows];
 
   const rowsHtml = allRows.map(step => {
     const isSkipped = !!step._skipped;
     const markerPos = step._sec !== null ? secToPos(step._sec) : '50%';
     const confClass = !isSkipped && (step.confidence || 0) >= 70 ? 'conf-high' : 'conf-mid';
-    const modeColor = step.matching_mode === 'face' ? 'var(--green)' : 'var(--cyan)';
-
-    // Gap annotation to next step (only for matched rows)
-    let gapHtml = '';
-    if (!isSkipped && step.observed_gap_sec != null && step.expected_transit_sec != null) {
-      const verdictColor = step.gap_verdict?.includes('\u2713') ? 'var(--green)' : 'var(--amber)';
-      gapHtml = `<span style="position:absolute;top:-22px;left:${markerPos};transform:translateX(-50%);font-size:.68rem;color:${verdictColor};font-family:var(--font-mono);white-space:nowrap;font-weight:700">+${Math.round(step.observed_gap_sec)}s ${step.gap_verdict || ''}</span>`;
-    }
-
+    const gapHtml = (!isSkipped && step.observed_gap_sec != null && step.expected_transit_sec != null)
+      ? `<span style="position:absolute;top:-20px;left:${markerPos};transform:translateX(-50%);font-size:10px;color:${step.gap_verdict?.includes('✓') ? PALETTE.success : PALETTE.warning};font-family:var(--font-mono);white-space:nowrap;font-weight:600">+${Math.round(step.observed_gap_sec)}s ${step.gap_verdict || ''}</span>` : '';
     const markerHtml = isSkipped
-      ? `<div style="position:absolute;left:50%;transform:translateX(-50%);top:50%;margin-top:-8px;width:16px;height:16px;border-radius:50%;background:var(--surface3);border:2px dashed var(--text-3);display:flex;align-items:center;justify-content:center;font-size:.6rem;color:var(--text-3)" title="${step.camera_id}: No matching sightings">✕</div>`
+      ? `<div class="tl-skip">✕</div>`
       : `<div class="tl-marker ${confClass}" style="left:${markerPos}" title="${step.camera_id} · Track #${step.track_id} at ${step.timestamp || '—'} (${(step.confidence||0).toFixed(1)}%)"></div>${gapHtml}`;
-
-    const rowOpacity = isSkipped ? '0.4' : '1';
-    const statusLabel = isSkipped
-      ? `<span style="font-size:.65rem;color:var(--text-3);font-family:var(--font-mono)">NO MATCH</span>`
-      : `<span style="font-size:.65rem;color:${modeColor};font-family:var(--font-mono);font-weight:700">${step.matching_mode === 'face' ? 'FACE' : 'BODY'}</span>`;
-
-    const subDetail = !isSkipped
-      ? `<div style="font-size:.7rem;color:var(--cyan);font-family:var(--font-mono);margin-top:2px;font-weight:700">Track #${step.track_id} · ${step.timestamp || '—'}</div>`
-      : '';
-
-    return `
-      <div class="timeline-row" style="opacity:${rowOpacity}">
-        <div class="timeline-cam">
-          <div class="timeline-cam-name">${step.camera_id}</div>
-          <div class="timeline-cam-loc">${step.camera_location || step.camera_id}</div>
-          ${subDetail}
-          ${statusLabel}
-        </div>
-        <div class="timeline-track" style="position:relative">
-          ${markerHtml}
-        </div>
-      </div>`;
+    const subDetail = !isSkipped ? `<div style="font-size:10.5px;color:var(--text-3);font-family:var(--font-mono);margin-top:2px">Track #${step.track_id} · ${step.timestamp || '—'}</div>` : '';
+    const statusLabel = isSkipped ? `<span class="badge-pill badge-default" style="font-size:9px">No match</span>`
+      : `<span class="badge-pill ${step.matching_mode === 'face' ? 'badge-poi' : 'badge-default'}" style="font-size:9px">${step.matching_mode === 'face' ? 'FACE' : 'BODY'}</span>`;
+    return `<div class="timeline-row" style="opacity:${isSkipped ? .5 : 1}">
+      <div class="timeline-cam"><div class="timeline-cam-name">${esc(step.camera_id)}</div><div class="timeline-cam-loc">${esc(step.camera_location || step.camera_id)}</div>${subDetail}${statusLabel}</div>
+      <div class="timeline-track">${markerHtml}</div>
+    </div>`;
   }).join('');
 
-  // Telemetry summary header bar
   const cfPct = ((route.route_confidence || 0) * 100).toFixed(1);
-  const cfColor = parseFloat(cfPct) >= 70 ? 'var(--green)' : parseFloat(cfPct) >= 50 ? 'var(--amber)' : 'var(--red)';
-  const matchDecision = route.match_decision || (route.session_id ? 'CONFIDENT_MATCH' : 'DEMO');
-
-  const summaryHeaderHtml = `
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:1.25rem;padding:.75rem 1rem;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid var(--border)">
-      <div style="display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap">
-        <div>
-          <span style="font-size:.7rem;font-family:var(--font-mono);color:var(--text-3)">SESSION</span>
-          <div style="font-size:1rem;font-weight:800;color:#fff">${route.session_id ? `#${route.session_id}` : 'DEMO'}</div>
-        </div>
-        <div>
-          <span style="font-size:.7rem;font-family:var(--font-mono);color:var(--text-3)">ROUTE EVIDENCE (MEAN FUSION)</span>
-          <div style="font-size:1rem;font-weight:800;color:${cfColor}">${cfPct}%</div>
-          <div style="font-size:.65rem;color:var(--text-3);font-family:var(--font-mono)">Similarity-derived · Not a probability</div>
-        </div>
-        <div>
-          <span style="font-size:.7rem;font-family:var(--font-mono);color:var(--text-3)">MATCHED CAMERAS</span>
-          <div style="font-size:1rem;font-weight:800;color:var(--cyan)">${route.total_cameras_matched || route.steps.length} channels</div>
-        </div>
-        <div>
-          <span style="font-size:.7rem;font-family:var(--font-mono);color:var(--text-3)">DECISION</span>
-          <div><span class="badge-pill badge-poi" style="font-size:.72rem">${matchDecision}</span></div>
-        </div>
-      </div>
-      ${route.supported_transitions_count != null ? `
-      <div style="display:flex;gap:.4rem">
-        <span class="badge-pill" style="background:rgba(16,185,129,.15);color:var(--green);font-size:.72rem;font-family:var(--font-mono);font-weight:800">
-          ✓ ${route.supported_transitions_count} SUPPORTED
-        </span>
-        ${route.ambiguous_transitions_count ? `<span class="badge-pill" style="background:rgba(245,158,11,.15);color:var(--amber);font-size:.72rem;font-family:var(--font-mono);font-weight:800">⚠ ${route.ambiguous_transitions_count} AMBIGUOUS</span>` : ''}
-        ${route.disconnected_transitions_count ? `<span class="badge-pill" style="background:rgba(239,68,68,.15);color:var(--red);font-size:.72rem;font-family:var(--font-mono);font-weight:800">✕ ${route.disconnected_transitions_count} DISCONNECTED</span>` : ''}
-      </div>` : ''}
-    </div>
-    ${route.narration ? `
-    <div style="padding:.75rem 1rem;margin-bottom:1.25rem;border-radius:8px;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.35);font-size:.85rem;font-weight:700;color:#e0e0ff;line-height:1.5;font-family:var(--font-mono)">
-      ${esc(route.narration)}
-    </div>` : ''}
-  `;
+  const cfColor = parseFloat(cfPct) >= 70 ? PALETTE.success : parseFloat(cfPct) >= 50 ? PALETTE.warning : PALETTE.error;
 
   container.innerHTML = `
-    ${summaryHeaderHtml}
+    <div class="flex gap-3" style="flex-wrap:wrap;align-items:center;margin-bottom:14px;padding:10px 12px;background:var(--muted);border-radius:var(--r-sm)">
+      <div><div class="field-hint" style="margin:0">Session</div><strong class="mono">#${route.session_id || '—'}</strong></div>
+      <div><div class="field-hint" style="margin:0">Route evidence (mean fusion)</div><strong style="color:${cfColor};font-size:16px">${cfPct}%</strong></div>
+      <div><div class="field-hint" style="margin:0">Matched cameras</div><strong>${route.total_cameras_matched || route.steps.length}</strong></div>
+      <div><div class="field-hint" style="margin:0">Decision</div><span class="badge-pill badge-poi">${esc(route.match_decision || '—')}</span></div>
+    </div>
+    ${route.narration ? `<div class="xai-reason" style="border-left-color:${PALETTE.info};margin-bottom:14px">${esc(route.narration)}</div>` : ''}
     <div class="timeline-wrap">
       <div class="timeline-header">${ticksHtml}</div>
       ${rowsHtml}
@@ -1916,13 +1241,10 @@ async function renderTimeline(requestedSessionId) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   WATCHLIST & TARGET DIRECTORY
+   WATCHLIST & PERSONS
 ═══════════════════════════════════════════════════════════════════ */
 function setupWatchlistForm() {
-  document.getElementById('form-register-person')?.addEventListener('submit', async e => {
-    e.preventDefault();
-    await registerPerson();
-  });
+  document.getElementById('form-register-person')?.addEventListener('submit', async e => { e.preventDefault(); await registerPerson(); });
   document.getElementById('btn-refresh-persons')?.addEventListener('click', loadPersonsList);
 }
 
@@ -1939,34 +1261,22 @@ async function registerPerson() {
   const desc  = document.getElementById('reg-desc').value.trim();
   const watchlistStatus = document.querySelector('input[name="reg-watchlist"]:checked')?.value || 'none';
   const st    = document.getElementById('reg-status');
-
   if (!name) { st.textContent = 'Name is required.'; st.className = 'status-inline err'; return; }
-  st.textContent = 'Registering profile…';
-  st.className   = 'status-inline';
-
+  st.textContent = 'Registering profile…'; st.className = 'status-inline';
   try {
-    // Build FormData — backend expects multipart form fields, not JSON
     const fd = new FormData();
-    fd.append('name',             name);
-    fd.append('alias',            alias);
-    fd.append('description',      desc);
-    fd.append('watchlist_status', watchlistStatus);
-
+    fd.append('name', name); fd.append('alias', alias);
+    fd.append('description', desc); fd.append('watchlist_status', watchlistStatus);
     const photoInput = document.getElementById('reg-photo-input');
     if (photoInput?.files[0]) fd.append('photo', photoInput.files[0]);
-
-    const person = await API.persons.create(fd);
-
-    st.textContent = 'Registered successfully!';
-    st.className   = 'status-inline ok';
+    await API.persons.create(fd);
+    st.textContent = 'Registered successfully.'; st.className = 'status-inline ok';
     document.getElementById('form-register-person').reset();
     document.getElementById('reg-photo-preview').style.display = 'none';
-    loadPersonsList();
-    loadPersonsSelect();
-    toast('Target profile enrolled', 'success');
+    loadPersonsList(); loadPersonsSelect();
+    toast('Person registered', 'success');
   } catch (e) {
-    st.textContent = e.message || 'Registration failed.';
-    st.className   = 'status-inline err';
+    st.textContent = e.message || 'Registration failed.'; st.className = 'status-inline err';
     toast('Registration failed: ' + e.message, 'error');
   }
 }
@@ -1975,133 +1285,88 @@ async function loadPersonsList() {
   const el  = document.getElementById('persons-list');
   const cnt = document.getElementById('persons-count');
   if (!el) return;
+  let persons = [];
+  try { persons = await API.persons.list(); }
+  catch (e) { el.innerHTML = `<div class="empty-msg" style="color:var(--error)">${esc(e.message)}</div>`; return; }
 
-  try {
-    const persons = await API.persons.list();
-    if (cnt) cnt.textContent = persons.length || 4;
+  if (cnt) cnt.textContent = persons.length;
+  if (!persons.length) {
+    el.innerHTML = `<div class="empty-msg">
+      <svg width="32" height="32" viewBox="0 0 20 20" fill="none"><circle cx="8" cy="7" r="3.2" stroke="currentColor" stroke-width="1.4"/><path d="M2 17c0-3.31 2.69-5 6-5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      <strong>No persons registered yet</strong><br>Register a person with a reference photo on the left.
+    </div>`;
+    return;
+  }
 
-    const displayPersons = persons.length >= 4 ? persons : [
-      { id: 1, name: 'ABC Target', alias: 'Subject-Alpha', watchlist_status: 'suspect', has_embedding: true },
-      { id: 2, name: 'Sarah Connor', alias: 'POI-209', watchlist_status: 'poi', has_embedding: true },
-      { id: 3, name: 'David Miller', alias: 'Missing-301', watchlist_status: 'missing', has_embedding: true },
-      { id: 4, name: 'Alex Mercer', alias: 'Critical-402', watchlist_status: 'suspect', has_embedding: true },
-    ];
-
-    if (State.personsViewMode === 'grid') {
-      el.innerHTML = `<div class="person-card-grid">
-        ${displayPersons.map(p => {
-          const avatarUrl = p.reference_image_path
-            ? `/uploads/reference_photos/${p.reference_image_path.replace(/\\/g, '/').split('/reference_photos/').pop()}`
-            : null;
-          return `
-            <div class="person-card">
-              <div class="person-card-avatar">
-                ${avatarUrl ? `<img src="${avatarUrl}" onerror="this.parentElement.textContent='👤'" />` : '👤'}
-              </div>
-              <div class="person-card-name">${esc(p.name)}</div>
-              <div class="person-card-alias">${p.alias ? esc(p.alias) : 'Target #' + p.id}</div>
-              <div style="margin-top:.7rem">
-                <span class="badge-pill badge-${p.watchlist_status}">${p.watchlist_status.toUpperCase()}</span>
-              </div>
-              <div style="margin-top:.5rem;font-size:.78rem;color:var(--cyan);font-family:var(--font-mono);font-weight:700">
-                ${p.has_embedding ? '✓ 512-d OSNet Vector' : '⚠ Missing Vector'}
-              </div>
-              <div class="person-card-actions">
-                <label class="btn btn-ghost btn-xs" style="flex:1" title="Upload photo to enroll">
-                  Enroll Photo
-                  <input type="file" accept="image/*" style="display:none" onchange="enrollPhoto(${p.id},this)" />
-                </label>
-                <button class="btn btn-danger btn-xs" onclick="deletePerson(${p.id})">Delete</button>
-              </div>
-            </div>`;
-        }).join('')}
+  if (State.personsViewMode === 'grid') {
+    el.innerHTML = `<div class="person-card-grid">${persons.map(p => {
+      const avatarUrl = p.reference_image_path
+        ? `/uploads/reference_photos/${p.reference_image_path.replace(/\\/g,'/').split('/reference_photos/').pop()}`
+        : null;
+      return `<div class="person-card">
+        <div class="person-card-avatar">${avatarUrl ? `<img src="${esc(avatarUrl)}" onerror="this.parentElement.textContent='👤'"/>` : '👤'}</div>
+        <div class="person-card-name">${esc(p.name)}</div>
+        <div class="person-card-alias">${p.alias ? esc(p.alias) : '#' + p.id}</div>
+        <div class="mt-2"><span class="badge-pill badge-${p.watchlist_status}">${p.watchlist_status.toUpperCase()}</span></div>
+        <div class="person-emb ${p.has_embedding ? 'yes' : 'no'}">${p.has_embedding ? '✓ Embedding enrolled' : '⚠ No embedding'}</div>
+        <div class="person-card-actions">
+          <label class="btn btn-ghost btn-xs" style="flex:1">Enroll
+            <input type="file" accept="image/*" style="display:none" onchange="enrollPhoto(${p.id},this)" />
+          </label>
+          <button class="btn btn-danger btn-xs" onclick="deletePerson(${p.id})">Delete</button>
+        </div>
       </div>`;
-    } else {
-      el.innerHTML = `
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th style="width:48px"></th>
-              <th>Target Identity</th>
-              <th>Watchlist Status</th>
-              <th>Embedding Vector</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${displayPersons.map(p => `
-              <tr>
-                <td>
-                  <div style="width:38px;height:38px;border-radius:50%;overflow:hidden;background:var(--surface2);border:1.5px solid var(--cyan);display:flex;align-items:center;justify-content:center;font-size:1.4rem">👤</div>
-                </td>
-                <td>
-                  <div style="font-weight:800;color:#fff;font-family:var(--font-heading)">${esc(p.name)}</div>
-                  ${p.alias ? `<div style="font-size:.78rem;color:var(--cyan);font-family:var(--font-mono)">${esc(p.alias)}</div>` : ''}
-                </td>
-                <td><span class="badge-pill badge-${p.watchlist_status}">${p.watchlist_status.toUpperCase()}</span></td>
-                <td><span style="color:var(--green);font-size:.82rem;font-weight:700;font-family:var(--font-mono)">✓ Enrolled (512-d)</span></td>
-                <td>
-                  <div style="display:flex;gap:.45rem">
-                    <label class="btn btn-ghost btn-xs">
-                      Enroll
-                      <input type="file" accept="image/*" style="display:none" onchange="enrollPhoto(${p.id},this)" />
-                    </label>
-                    <button class="btn btn-danger btn-xs" onclick="deletePerson(${p.id})">Delete</button>
-                  </div>
-                </td>
-              </tr>`).join('')}
-          </tbody>
-        </table>`;
-    }
-  } catch (e) {
-    el.innerHTML = `<div class="empty-msg" style="color:var(--red)">${esc(e.message)}</div>`;
+    }).join('')}</div>`;
+  } else {
+    el.innerHTML = `<table class="data-table">
+      <thead><tr><th style="width:44px"></th><th>Identity</th><th>Status</th><th>Embedding</th><th>Actions</th></tr></thead>
+      <tbody>
+        ${persons.map(p => {
+          const avatarUrl = p.reference_image_path ? `/uploads/reference_photos/${p.reference_image_path.replace(/\\/g,'/').split('/reference_photos/').pop()}` : null;
+          return `<tr>
+            <td><div class="person-card-avatar" style="width:34px;height:34px;font-size:1rem;margin:0">${avatarUrl ? `<img src="${esc(avatarUrl)}" onerror="this.parentElement.textContent='👤'"/>` : '👤'}</div></td>
+            <td><strong>${esc(p.name)}</strong>${p.alias ? `<div class="text-3" style="font-size:11.5px">${esc(p.alias)}</div>` : ''}</td>
+            <td><span class="badge-pill badge-${p.watchlist_status}">${p.watchlist_status.toUpperCase()}</span></td>
+            <td class="person-emb ${p.has_embedding ? 'yes' : 'no'}">${p.has_embedding ? 'Enrolled' : 'Missing'}</td>
+            <td><div class="flex gap-2"><label class="btn btn-ghost btn-xs">Enroll<input type="file" accept="image/*" style="display:none" onchange="enrollPhoto(${p.id},this)"/></label><button class="btn btn-danger btn-xs" onclick="deletePerson(${p.id})">Delete</button></div></td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
   }
 }
 
 async function enrollPhoto(personId, input) {
   const file = input.files[0];
   if (!file) return;
-  const fd = new FormData();
-  fd.append('photo', file);
+  const fd = new FormData(); fd.append('photo', file);
   try {
     await API.persons.enroll(personId, fd);
     toast('Reference photo enrolled', 'success');
-    loadPersonsList();
-    loadPersonsSelect();
-  } catch (e) { toast('Enroll photo uploaded', 'success'); }
+    loadPersonsList(); loadPersonsSelect();
+  } catch (e) { toast('Enroll failed: ' + e.message, 'error'); }
 }
 
 async function deletePerson(id) {
-  if (!confirm('Delete target profile? This operation is permanent.')) return;
+  if (!confirm('Delete this person? This operation is permanent.')) return;
   try {
     await API.persons.delete(id);
-    toast('Profile deleted', 'success');
-    loadPersonsList();
-    loadPersonsSelect();
-  } catch (e) { toast('Profile deleted', 'info'); }
+    toast('Person deleted', 'success');
+    loadPersonsList(); loadPersonsSelect();
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
    PIPELINE VIDEO STUDIO
 ═══════════════════════════════════════════════════════════════════ */
 let _uploadFile = null;
-
-// In-memory mirror of camera config loaded from the API.
-// Shape: { C01: { location, start_time, connects_to: [{to_camera_id, avg_transit_sec}] }, … }
 const _camConfig = {};
 
-/* ── Wiring ── */
 function setupUploadForm() {
-  document.getElementById('form-upload-video')?.addEventListener('submit', async e => {
-    e.preventDefault();
-    await uploadVideo();
-  });
+  document.getElementById('form-upload-video')?.addEventListener('submit', async e => { e.preventDefault(); await uploadVideo(); });
 }
-
-// setupCamRadios is now a no-op — radios are rebuilt by renderCameraConfigUI.
 function setupCamRadios() {}
 
-/* ── Load camera data from API and render both config panel + radio strip ── */
 async function loadCameraConfig() {
   try {
     const cameras = await API.cameras.list();
@@ -2109,325 +1374,163 @@ async function loadCameraConfig() {
     renderCameraConfigUI(cameras);
     rebuildCamRadios(cameras);
     const heroEl = document.getElementById('hero-cam-count');
-    if (heroEl) heroEl.textContent = `${cameras.length} camera${cameras.length !== 1 ? 's' : ''} configured`;
+    if (heroEl) heroEl.textContent = `${cameras.length} camera${cameras.length !== 1 ? 's' : ''}`;
   } catch (e) {
-    // API not reachable — if the grid is visible show a message, otherwise silently skip
     const grid = document.getElementById('camera-config-grid');
-    if (grid && grid.offsetParent !== null) {
-      grid.innerHTML = `<div style="color:var(--text-3);font-size:.85rem;font-family:var(--font-mono);padding:.5rem 0;grid-column:1/-1">
-        Camera data unavailable — configure settings after connecting the backend.
-      </div>`;
-    }
+    if (grid && grid.offsetParent !== null)
+      grid.innerHTML = `<div class="empty-msg" style="grid-column:1/-1">Camera data unavailable — start the backend and sync again.</div>`;
   }
 }
 
-/* ── Render the Step-1 camera config cards ── */
 function renderCameraConfigUI(cameras) {
   const grid    = document.getElementById('camera-config-grid');
   const strip   = document.getElementById('transit-config-strip');
   const edgeList = document.getElementById('transit-edges-list');
   if (!grid) return;
 
-  // Camera cards
-  grid.innerHTML = cameras.map(cam => {
-    const loc  = esc(cam.location  || '');
-    const time = esc(cam.start_time || '');
-    return `
+  grid.innerHTML = cameras.map(cam => `
     <div class="cam-config-card" id="cfg-card-${cam.id}">
       <div class="cam-config-header">
         <span class="cam-config-badge">${esc(cam.id)}</span>
-        <span style="font-size:.8rem;color:var(--text-3);font-family:var(--font-mono)">CAMERA CHANNEL</span>
-        <span id="cfg-saved-${cam.id}" style="display:none;font-size:.72rem;color:var(--green);font-family:var(--font-mono);font-weight:800;margin-left:auto">✓ SAVED</span>
+        <span class="text-3" style="font-size:11px">Camera channel</span>
       </div>
-
+      <div style="margin-bottom:10px">
+        <div class="cam-config-label">Location name</div>
+        <input class="cam-config-input" id="cfg-loc-${cam.id}" type="text" placeholder="e.g. Main Entrance" value="${esc(cam.location || '')}" oninput="markCamDirty('${cam.id}')" />
+      </div>
       <div>
-        <div class="cam-config-label">LOCATION NAME</div>
-        <input
-          class="cam-config-input"
-          id="cfg-loc-${cam.id}"
-          type="text"
-          placeholder="e.g. Main Entrance"
-          value="${loc}"
-          oninput="markCamDirty('${cam.id}')"
-        />
+        <div class="cam-config-label">Recording start time</div>
+        <input class="cam-config-input" id="cfg-time-${cam.id}" type="time" step="1" value="${esc(cam.start_time || '')}" oninput="markCamDirty('${cam.id}')" />
       </div>
-
-      <div>
-        <div class="cam-config-label">RECORDING START TIME (HH:MM:SS)</div>
-        <input
-          class="cam-config-input"
-          id="cfg-time-${cam.id}"
-          type="time"
-          step="1"
-          value="${time}"
-          oninput="markCamDirty('${cam.id}')"
-        />
-      </div>
-
-      <button
-        class="btn btn-ghost btn-xs cam-config-save-btn"
-        onclick="saveCameraConfig('${cam.id}')"
-        id="cfg-btn-${cam.id}"
-      >
-        <svg width="11" height="11" viewBox="0 0 20 20" fill="none"><path d="M4 10l4 4 8-8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Save ${esc(cam.id)}
+      <button class="btn btn-ghost btn-sm cam-config-save-btn" onclick="saveCameraConfig('${cam.id}')" id="cfg-btn-${cam.id}">
+        <svg width="11" height="11" viewBox="0 0 20 20" fill="none"><path d="M4 10l4 4 8-8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Save ${esc(cam.id)}
       </button>
-    </div>`;
-  }).join('');
+    </div>`).join('') || `<div class="empty-msg" style="grid-column:1/-1">No cameras configured.</div>`;
 
-  // Collect all transit edges — only between MVP cameras that are in the loaded list
   const loadedCamIds = new Set(cameras.map(c => c.id));
   const seenEdges = new Set();
-  const allEdges  = [];
+  const allEdges = [];
   cameras.forEach(cam => {
     (cam.connects_to || []).forEach(edge => {
-      // Skip edges to cameras not in the active camera list (stretch-only)
       if (!loadedCamIds.has(edge.to_camera_id)) return;
       const key = [cam.id, edge.to_camera_id].sort().join('-');
-      if (!seenEdges.has(key)) {
-        seenEdges.add(key);
-        allEdges.push({ from: cam.id, to: edge.to_camera_id, secs: edge.avg_transit_sec });
-      }
+      if (!seenEdges.has(key)) { seenEdges.add(key); allEdges.push({ from: cam.id, to: edge.to_camera_id, secs: edge.avg_transit_sec }); }
     });
   });
-
   if (allEdges.length && edgeList && strip) {
     strip.style.display = 'block';
-    edgeList.innerHTML = allEdges.map(e => {
-      const fromLoc = _camConfig[e.from]?.location || e.from;
-      const toLoc   = _camConfig[e.to]?.location   || e.to;
-      return `
+    edgeList.innerHTML = allEdges.map(e => `
       <div class="transit-edge-row">
-        <span class="transit-edge-label">
-          <strong style="color:#fff">${esc(e.from)}</strong>
-          <span style="color:var(--cyan);margin:0 .35rem">→</span>
-          <strong style="color:#fff">${esc(e.to)}</strong>
-          <span style="color:var(--text-3);margin-left:.4rem">(${esc(fromLoc)} → ${esc(toLoc)})</span>
-        </span>
-        <input
-          class="transit-input"
-          id="transit-${e.from}-${e.to}"
-          type="number"
-          min="1"
-          max="3600"
-          value="${e.secs}"
-          oninput="markTransitDirty()"
-        />
+        <span class="transit-edge-label"><strong>${esc(e.from)}</strong> → <strong>${esc(e.to)}</strong> <span class="text-3">(${esc(_camConfig[e.from]?.location || e.from)} → ${esc(_camConfig[e.to]?.location || e.to)})</span></span>
+        <input class="transit-input" id="transit-${e.from}-${e.to}" type="number" min="1" max="3600" value="${e.secs}" oninput="markTransitDirty()" />
         <span class="transit-unit">sec</span>
-      </div>`;
-    }).join('');
-
-    // Store edge metadata for save
+      </div>`).join('');
     edgeList.dataset.edges = JSON.stringify(allEdges.map(e => ({ from: e.from, to: e.to })));
   }
 }
 
-/* ── Mark a camera card dirty (unsaved changes) ── */
 function markCamDirty(camId) {
-  const card = document.getElementById(`cfg-card-${camId}`);
-  if (card) { card.classList.add('dirty'); card.classList.remove('saved'); }
-  const savedBadge = document.getElementById(`cfg-saved-${camId}`);
-  if (savedBadge) savedBadge.style.display = 'none';
+  document.getElementById(`cfg-card-${camId}`)?.classList.add('dirty');
 }
-
 function markTransitDirty() {
-  // Visual feedback — we don't have a per-edge card, just pulse the save-all btn
-  const btn = document.getElementById('btn-save-all-cameras');
-  if (btn) btn.classList.add('btn-primary');
+  document.getElementById('btn-save-all-cameras')?.classList.replace('btn-secondary', 'btn-primary');
 }
 
-/* ── Save one camera's location + start_time ── */
 async function saveCameraConfig(camId) {
   const locEl  = document.getElementById(`cfg-loc-${camId}`);
   const timeEl = document.getElementById(`cfg-time-${camId}`);
   const btn    = document.getElementById(`cfg-btn-${camId}`);
-  const card   = document.getElementById(`cfg-card-${camId}`);
-
-  const location   = locEl?.value.trim()  || null;
+  const location   = locEl?.value.trim() || null;
   const start_time = timeEl?.value.trim() || null;
+  if (!location) { toast(`${camId}: location name cannot be empty`, 'error'); locEl?.focus(); return; }
 
-  if (!location) {
-    toast(`${camId}: Location name cannot be empty`, 'error');
-    locEl?.focus();
-    return;
-  }
-
-  // Collect any transit updates that involve this camera (as the source)
   const edgeList = document.getElementById('transit-edges-list');
   const edgeMeta = edgeList?.dataset.edges ? JSON.parse(edgeList.dataset.edges) : [];
   const transit_updates = {};
-  edgeMeta.forEach(({ from, to }) => {
-    if (from === camId) {
-      const inp = document.getElementById(`transit-${from}-${to}`);
-      if (inp) transit_updates[to] = parseInt(inp.value, 10) || 30;
-    }
-  });
+  edgeMeta.forEach(({ from, to }) => { if (from === camId) { const inp = document.getElementById(`transit-${from}-${to}`); if (inp) transit_updates[to] = parseInt(inp.value, 10) || 30; } });
 
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-
   try {
-    const updated = await API.cameras.patch(camId, {
-      location,
-      start_time: start_time || undefined,
-      transit_updates: Object.keys(transit_updates).length ? transit_updates : undefined,
-    });
-
-    // Update in-memory mirror
+    const updated = await API.cameras.patch(camId, { location, start_time: start_time || undefined, transit_updates: Object.keys(transit_updates).length ? transit_updates : undefined });
     _camConfig[camId] = updated;
-
-    // Update the radio label in the upload selector
-    const radioLocEl = document.querySelector(`#upload-camera-grid label:has(input[value="${camId}"]) .cam-loc`);
-    if (radioLocEl) radioLocEl.textContent = updated.location;
-
-    // Mark saved state
-    if (card) { card.classList.remove('dirty'); card.classList.add('saved'); }
-    const savedBadge = document.getElementById(`cfg-saved-${camId}`);
-    if (savedBadge) savedBadge.style.display = 'inline';
-
+    document.getElementById(`cfg-card-${camId}`)?.classList.remove('dirty');
     toast(`${camId} saved — "${updated.location}"`, 'success');
   } catch (err) {
     toast(`Failed to save ${camId}: ${err.message}`, 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = `Save ${camId}`; }
+    if (btn) { btn.disabled = false; btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 20 20" fill="none"><path d="M4 10l4 4 8-8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Save ${camId}`; }
   }
 }
 
-/* ── Save all cameras + all transit times at once ── */
 async function saveAllCameras() {
-  const btn = document.getElementById('btn-save-all-cameras');
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-
-  // Save each camera sequentially (avoids concurrent graph.json writes)
   const ids = Object.keys(_camConfig);
-  if (!ids.length) {
-    // No data loaded yet — nothing to save
-    toast('No camera data loaded yet', 'info');
-    if (btn) { btn.disabled = false; btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 20 20" fill="none"><path d="M4 10l4 4 8-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Save All`; }
-    return;
-  }
-
+  if (!ids.length) { toast('No camera data loaded yet', 'info'); return; }
   let anyFail = false;
-  for (const camId of ids) {
-    try {
-      await saveCameraConfig(camId);
-    } catch {
-      anyFail = true;
-    }
-  }
-
-  if (btn) {
-    btn.disabled = false;
-    btn.classList.remove('btn-primary');
-    btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 20 20" fill="none"><path d="M4 10l4 4 8-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Save All`;
-  }
+  for (const camId of ids) { try { await saveCameraConfig(camId); } catch { anyFail = true; } }
   if (!anyFail) toast('All camera settings saved', 'success');
 }
 
-/* ── Rebuild the upload-form camera radio buttons from live API data ── */
 function rebuildCamRadios(cameras) {
   const grid = document.getElementById('upload-camera-grid');
   if (!grid || !cameras.length) return;
-
-  const camIconSvg = (active) =>
-    `<svg width="18" height="18" viewBox="0 0 20 20" fill="none" style="color:${active ? 'var(--cyan)' : 'var(--text-3)'}"><rect x="2" y="5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M15 9l3.5-2v6L15 11" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
-
   grid.innerHTML = cameras.map((cam, i) => `
     <label class="cam-radio${i === 0 ? ' active' : ''}">
       <input type="radio" name="upload-camera" value="${esc(cam.id)}" ${i === 0 ? 'checked' : ''} />
-      ${camIconSvg(i === 0)}
-      <span class="cam-id">${esc(cam.id)}</span>
-      <span class="cam-loc">${esc(cam.location)}</span>
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M15 9l3.5-2v6L15 11" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+      <span class="cam-id">${esc(cam.id)}</span><span class="cam-loc">${esc(cam.location)}</span>
     </label>`).join('');
-
-  // Re-wire active highlight on change
-  grid.querySelectorAll('.cam-radio').forEach(label => {
+  grid.querySelectorAll('.cam-radio').forEach(label =>
     label.querySelector('input')?.addEventListener('change', () => {
       grid.querySelectorAll('.cam-radio').forEach(l => l.classList.remove('active'));
       label.classList.add('active');
-      // Update svg color
-      grid.querySelectorAll('.cam-radio svg').forEach(svg => svg.style.color = 'var(--text-3)');
-      label.querySelector('svg').style.color = 'var(--cyan)';
-    });
-  });
+    })
+  );
 }
 
-/* ── Upload video ── */
 async function uploadVideo() {
   const st = document.getElementById('upload-status-msg');
   if (!_uploadFile) { st.textContent = 'Select a video file first.'; st.className = 'status-inline err'; return; }
-
-  // Auto-save any dirty camera config before processing starts
   const dirtyCards = document.querySelectorAll('.cam-config-card.dirty');
   if (dirtyCards.length) {
-    st.textContent = 'Saving camera settings…';
-    st.className   = 'status-inline';
-    for (const card of dirtyCards) {
-      const camId = card.id.replace('cfg-card-', '');
-      try { await saveCameraConfig(camId); } catch { /* non-fatal */ }
-    }
+    st.textContent = 'Saving camera settings…'; st.className = 'status-inline';
+    for (const card of dirtyCards) { const camId = card.id.replace('cfg-card-', ''); try { await saveCameraConfig(camId); } catch {} }
   }
-
-  st.textContent = 'Uploading…';
-  st.className   = 'status-inline';
-
+  st.textContent = 'Uploading…'; st.className = 'status-inline';
   const camId = document.querySelector('input[name="upload-camera"]:checked')?.value || 'C01';
-  const fd    = new FormData();
-  fd.append('camera_id', camId);
-  fd.append('video',     _uploadFile);
-
+  const fd = new FormData(); fd.append('camera_id', camId); fd.append('video', _uploadFile);
   try {
     const job = await API.upload.video(fd);
-    st.textContent = `Job started (${job.job_id.slice(0, 8)}…)`;
-    st.className   = 'status-inline ok';
-    _uploadFile    = null;
-    const info = document.getElementById('upload-file-info');
-    if (info) info.style.display = 'none';
+    st.textContent = `Job started (${job.job_id.slice(0, 8)}…)`; st.className = 'status-inline ok';
+    _uploadFile = null;
+    document.getElementById('upload-file-info').style.display = 'none';
     toast(`Processing started for ${camId} — this may take several minutes`, 'info');
-    loadUploadJobs();
-    pollJob(job.job_id);
+    loadUploadJobs(); pollJob(job.job_id);
   } catch (e) {
-    st.textContent = e.message;
-    st.className   = 'status-inline err';
+    st.textContent = e.message; st.className = 'status-inline err';
     toast('Upload failed: ' + e.message, 'error');
   }
 }
 
-/* ── Job queue ── */
 async function loadUploadJobs() {
   const el = document.getElementById('upload-jobs-list');
   if (!el) return;
-
   try {
     const jobs = await API.upload.jobs();
-    if (!jobs.length) {
-      el.innerHTML = `<div class="empty-msg" style="padding:2.5rem 0">
-        <svg width="36" height="36" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><line x1="7" y1="8" x2="13" y2="8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="7" y1="11" x2="11" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        No jobs yet
-      </div>`;
-      return;
-    }
-    // Resolve location label from in-memory config
+    if (!jobs.length) { el.innerHTML = `<div class="empty-msg">No jobs yet. Upload a video to start processing.</div>`; return; }
     el.innerHTML = jobs.map(j => {
       const loc = _camConfig[j.camera_id]?.location || j.camera_id;
-      return `
-      <div class="job-row" id="job-${j.job_id}">
-        <div class="job-icon">
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><rect x="2" y="3" width="16" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M8 8l4 2-4 2V8z" fill="currentColor" opacity=".7"/></svg>
-        </div>
-        <div class="job-info">
-          <div class="job-name">${esc(j.camera_id)} <span style="color:var(--text-3)">·</span> ${esc(loc)} — ${esc(j.filename)}</div>
-          <div class="job-msg">${esc(j.message || '')}</div>
-        </div>
+      return `<div class="job-row" id="job-${j.job_id}">
+        <div class="job-icon"><svg width="16" height="16" viewBox="0 0 20 20" fill="none"><rect x="2" y="3" width="16" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M8 8l4 2-4 2V8z" fill="currentColor" opacity=".6"/></svg></div>
+        <div class="job-info"><div class="job-name">${esc(j.camera_id)} · ${esc(loc)} — ${esc(j.filename)}</div><div class="job-msg">${esc(j.message || '')}</div></div>
         <span class="chip chip-${j.status}">${j.status}</span>
       </div>`;
     }).join('');
   } catch (e) {
-    el.innerHTML = `<div class="empty-msg" style="color:var(--red)">${esc(e.message)}</div>`;
+    el.innerHTML = `<div class="empty-msg" style="color:var(--error)">${esc(e.message)}</div>`;
   }
 }
 
 const _jobPollers = {};
-
 function pollJob(jobId) {
   if (_jobPollers[jobId]) return;
   _jobPollers[jobId] = setInterval(async () => {
@@ -2437,20 +1540,15 @@ function pollJob(jobId) {
       if (row) {
         row.querySelector('.job-msg').textContent = job.message || '';
         const chip = row.querySelector('.chip');
-        chip.className   = `chip chip-${job.status}`;
-        chip.textContent = job.status;
+        chip.className = `chip chip-${job.status}`; chip.textContent = job.status;
       }
       if (job.status === 'done' || job.status === 'failed') {
-        clearInterval(_jobPollers[jobId]);
-        delete _jobPollers[jobId];
+        clearInterval(_jobPollers[jobId]); delete _jobPollers[jobId];
         const loc = _camConfig[job.camera_id]?.location || job.camera_id;
         if (job.status === 'done') toast(`Pipeline complete — ${job.camera_id} (${loc})`, 'success');
-        else                       toast(`Pipeline failed — ${job.camera_id}`, 'error');
+        else toast(`Pipeline failed — ${job.camera_id}`, 'error');
       }
-    } catch {
-      clearInterval(_jobPollers[jobId]);
-      delete _jobPollers[jobId];
-    }
+    } catch { clearInterval(_jobPollers[jobId]); delete _jobPollers[jobId]; }
   }, 3000);
 }
 
@@ -2461,10 +1559,10 @@ function setupDropZones() {
   ['query-drop-zone', 'reg-drop-zone', 'upload-drop-zone'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('drag-over'); });
-    el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+    el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('drag'); });
+    el.addEventListener('dragleave', () => el.classList.remove('drag'));
     el.addEventListener('drop', e => {
-      e.preventDefault(); el.classList.remove('drag-over');
+      e.preventDefault(); el.classList.remove('drag');
       const files = e.dataTransfer.files;
       if (!files?.length) return;
       if (id === 'query-drop-zone') handleQueryPhoto(files[0]);
@@ -2472,198 +1570,95 @@ function setupDropZones() {
       if (id === 'upload-drop-zone') handleUploadVideo(files[0]);
     });
   });
-
   document.getElementById('query-photo-input')?.addEventListener('change', e => e.target.files[0] && handleQueryPhoto(e.target.files[0]));
   document.getElementById('reg-photo-input')?.addEventListener('change', e => e.target.files[0] && handleRegPhoto(e.target.files[0]));
   document.getElementById('upload-video-input')?.addEventListener('change', e => e.target.files[0] && handleUploadVideo(e.target.files[0]));
 }
-
-function handleQueryPhoto(file) {
-  _queryPhotoFile = file;
-  showPhotoPreview('query-photo-preview', file);
-}
-function handleRegPhoto(file) {
-  showPhotoPreview('reg-photo-preview', file);
-}
+function handleQueryPhoto(file) { _queryPhotoFile = file; showPhotoPreview('query-photo-preview', file); }
+function handleRegPhoto(file) { showPhotoPreview('reg-photo-preview', file); }
 function handleUploadVideo(file) {
   _uploadFile = file;
-  const info  = document.getElementById('upload-file-info');
-  if (info) {
-    info.style.display = 'block';
-    info.innerHTML = `<strong>Selected Video:</strong> ${esc(file.name)} (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
-  }
+  const info = document.getElementById('upload-file-info');
+  if (info) { info.style.display = 'block'; info.innerHTML = `<strong>Selected:</strong> ${esc(file.name)} (${(file.size/1024/1024).toFixed(1)} MB)`; }
 }
-
 function showPhotoPreview(previewId, file) {
   const el = document.getElementById(previewId);
   if (!el) return;
   const reader = new FileReader();
-  reader.onload = e => {
-    el.innerHTML = `<img src="${e.target.result}" />`;
-    el.style.display = 'block';
-  };
+  reader.onload = e => { el.innerHTML = `<img src="${e.target.result}" />`; el.style.display = 'block'; };
   reader.readAsDataURL(file);
 }
-
 function toast(msg, type = 'info') {
   const container = document.getElementById('toast-container');
   if (!container) return;
   const t = document.createElement('div');
-  t.className = `toast toast-${type}`;
-  t.innerHTML = `
-    <span style="font-size:1.1rem">${type === 'success' ? '✓' : type === 'error' ? '⚠' : 'ℹ'}</span>
-    <div>${esc(msg)}</div>`;
+  t.className = `toast ${type}`;
+  t.innerHTML = `<span style="font-weight:700">${type === 'success' ? '✓' : type === 'error' ? '⚠' : 'ℹ'}</span><div>${esc(msg)}</div>`;
   container.appendChild(t);
   setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 250); }, 3200);
 }
-
 function closeModal() {
-  document.getElementById('modal-backdrop').style.display = 'none';
-  document.getElementById('modal').style.display = 'none';
+  document.getElementById('modal-backdrop').classList.add('hidden');
+  document.getElementById('modal').classList.add('hidden');
 }
-
-function esc(str) {
-  if (!str) return '';
-  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
+function esc(str) { return str == null ? '' : String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function fmtTime(isoStr) {
   if (!isoStr) return '—';
-  try { return new Date(isoStr).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' UTC'; }
+  try { return new Date(isoStr).toLocaleString('en-GB', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }); }
   catch { return isoStr; }
 }
-
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 /* ═══════════════════════════════════════════════════════════════════
    CAMERA LOCATION MANAGER — Google Maps integration
 ═══════════════════════════════════════════════════════════════════ */
+const CamLoc = { map: null, marker: null, allMarkers: {}, cameras: [], selectedId: null, mapsLoaded: false, mapsLoading: false, searchBox: null };
 
-const CamLoc = {
-  map:             null,   // google.maps.Map instance
-  marker:          null,   // active draggable marker (selected camera)
-  allMarkers:      {},     // { cameraId: google.maps.Marker } for all cameras
-  cameras:         [],     // latest camera list from API
-  selectedId:      null,   // currently selected camera id
-  mapsLoaded:      false,  // true once the Maps JS API script has fired its callback
-  mapsLoading:     false,  // true while the script tag is being injected
-  searchBox:       null,   // google.maps.places.SearchBox
-};
-
-/* ── Entry point — called whenever the camera-location view is activated ── */
 async function loadCameraLocationView() {
-  // Load cameras from API (refreshes State.cameras too)
-  try {
-    CamLoc.cameras = await API.cameras.list();
-  } catch (e) {
-    CamLoc.cameras = State.cameras || [];
-  }
-
-  renderCamLocList();
-  _updateCamLocStats();
-
-  // Fetch Maps config and load the Maps JS SDK if not already done
+  try { CamLoc.cameras = await API.cameras.list(); }
+  catch { CamLoc.cameras = State.cameras || []; }
+  renderCamLocList(); _updateCamLocStats();
   try {
     const cfg = await API.cameras.mapsConfig();
     const banner = document.getElementById('maps-not-configured-banner');
     if (!cfg.configured) {
       if (banner) banner.style.display = 'flex';
-      document.getElementById('cam-map-placeholder').querySelector('span').textContent =
-        'Google Maps API key not configured — see banner above.';
+      const ph = document.getElementById('cam-map-placeholder');
+      if (ph) ph.querySelector('span').textContent = 'Google Maps API key not configured — see banner above.';
       return;
     }
     if (banner) banner.style.display = 'none';
     await loadGoogleMapsScript(cfg.google_maps_api_key);
-  } catch (e) {
-    toast('Failed to load Maps config: ' + e.message, 'error');
-    return;
-  }
-
-  // If map not yet initialised, build it now
-  if (!CamLoc.map) {
-    initCamLocMap();
-  } else {
-    // Map already exists — refresh all camera markers
-    refreshAllCamMarkers();
-  }
+  } catch (e) { toast('Failed to load Maps config: ' + e.message, 'error'); return; }
+  if (!CamLoc.map) initCamLocMap(); else refreshAllCamMarkers();
 }
 
-/* ── Dynamically inject the Google Maps JS SDK (idempotent) ── */
 function loadGoogleMapsScript(apiKey) {
   return new Promise((resolve, reject) => {
     if (CamLoc.mapsLoaded) { resolve(); return; }
-    if (CamLoc.mapsLoading) {
-      // Another call already in-flight; poll until ready
-      const poll = setInterval(() => {
-        if (CamLoc.mapsLoaded) { clearInterval(poll); resolve(); }
-      }, 100);
-      return;
-    }
+    if (CamLoc.mapsLoading) { const poll = setInterval(() => { if (CamLoc.mapsLoaded) { clearInterval(poll); resolve(); } }, 100); return; }
     CamLoc.mapsLoading = true;
-
-    // Expose callback so Maps SDK can signal readiness
-    window._traceMapsCallback = () => {
-      CamLoc.mapsLoaded = true;
-      CamLoc.mapsLoading = false;
-      resolve();
-    };
-
+    window._traceMapsCallback = () => { CamLoc.mapsLoaded = true; CamLoc.mapsLoading = false; resolve(); };
     const script = document.createElement('script');
     script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&callback=_traceMapsCallback`;
-    script.async = true;
-    script.defer = true;
-    script.onerror = () => {
-      CamLoc.mapsLoading = false;
-      reject(new Error('Google Maps script failed to load. Check your API key and browser console.'));
-    };
+    script.async = true; script.defer = true;
+    script.onerror = () => { CamLoc.mapsLoading = false; reject(new Error('Google Maps script failed to load. Check your API key.')); };
     document.head.appendChild(script);
   });
 }
 
-/* ── Build the Google Map and attach event listeners ── */
 function initCamLocMap() {
   const container = document.getElementById('cam-location-map');
   if (!container || !window.google?.maps) return;
-
-  // Hide placeholder text
-  const placeholder = document.getElementById('cam-map-placeholder');
-  if (placeholder) placeholder.style.display = 'none';
-
-  // Default centre: first camera with coords, else London
+  document.getElementById('cam-map-placeholder').style.display = 'none';
   const firstWithCoords = CamLoc.cameras.find(c => c.latitude != null && c.longitude != null);
-  const centre = firstWithCoords
-    ? { lat: firstWithCoords.latitude, lng: firstWithCoords.longitude }
-    : { lat: 30.7333, lng: 76.7794 };  // Default: Chandigarh, India
-
-  CamLoc.map = new google.maps.Map(container, {
-    center:    centre,
-    zoom:      15,
-    mapTypeId: 'roadmap',
-    styles: [
-      { elementType: 'geometry',        stylers: [{ color: '#0d1427' }] },
-      { elementType: 'labels.text.fill', stylers: [{ color: '#8ec3b9' }] },
-      { elementType: 'labels.text.stroke', stylers: [{ color: '#1a3646' }] },
-      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e1626' }] },
-      { featureType: 'road',  elementType: 'geometry', stylers: [{ color: '#304a7d' }] },
-      { featureType: 'road',  elementType: 'geometry.stroke', stylers: [{ color: '#255763' }] },
-      { featureType: 'poi',   elementType: 'geometry', stylers: [{ color: '#283d6a' }] },
-      { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#2f3948' }] },
-    ],
-  });
-
-  // Click on map → move the active camera's marker
+  const centre = firstWithCoords ? { lat: firstWithCoords.latitude, lng: firstWithCoords.longitude } : { lat: 30.7333, lng: 76.7794 };
+  CamLoc.map = new google.maps.Map(container, { center: centre, zoom: 15, mapTypeId: 'roadmap', mapTypeControl: true, zoomControl: true, streetViewControl: false, fullscreenControl: true });
   CamLoc.map.addListener('click', (e) => {
-    if (!CamLoc.selectedId) {
-      toast('Select a camera from the list first', 'info');
-      return;
-    }
-    const lat = e.latLng.lat();
-    const lng = e.latLng.lng();
-    placeDraggableMarker(lat, lng);
-    updateEditFormCoords(lat, lng);
+    if (!CamLoc.selectedId) { toast('Select a camera from the list first', 'info'); return; }
+    const lat = e.latLng.lat(), lng = e.latLng.lng();
+    placeDraggableMarker(lat, lng); updateEditFormCoords(lat, lng);
   });
-
-  // Wire up Places search box
   const searchInput = document.getElementById('cam-loc-search');
   if (searchInput && google.maps.places) {
     CamLoc.searchBox = new google.maps.places.SearchBox(searchInput);
@@ -2672,296 +1667,156 @@ function initCamLocMap() {
       if (!places?.length) return;
       const place = places[0];
       if (!place.geometry?.location) return;
-      const lat = place.geometry.location.lat();
-      const lng = place.geometry.location.lng();
-      CamLoc.map.setCenter({ lat, lng });
-      CamLoc.map.setZoom(17);
-      placeDraggableMarker(lat, lng);
-      updateEditFormCoords(lat, lng);
-      // Pre-fill location name if field is empty
+      const lat = place.geometry.location.lat(), lng = place.geometry.location.lng();
+      CamLoc.map.setCenter({ lat, lng }); CamLoc.map.setZoom(17);
+      placeDraggableMarker(lat, lng); updateEditFormCoords(lat, lng);
       const nameInput = document.getElementById('cam-loc-name');
-      if (nameInput && !nameInput.value.trim() && place.name) {
-        nameInput.value = place.name;
-      }
+      if (nameInput && !nameInput.value.trim() && place.name) nameInput.value = place.name;
     });
   }
-
-  // Drop markers for all cameras that already have coordinates
   refreshAllCamMarkers();
 }
 
-/* ── Place or move the single draggable marker for the selected camera ── */
 function placeDraggableMarker(lat, lng) {
   if (!CamLoc.map) return;
-
-  if (CamLoc.marker) {
-    CamLoc.marker.setPosition({ lat, lng });
-    return;
-  }
-
+  if (CamLoc.marker) { CamLoc.marker.setPosition({ lat, lng }); return; }
   CamLoc.marker = new google.maps.Marker({
-    position:  { lat, lng },
-    map:       CamLoc.map,
-    draggable: true,
-    animation: google.maps.Animation.DROP,
-    icon: {
-      path:        google.maps.SymbolPath.CIRCLE,
-      scale:       10,
-      fillColor:   '#06b6d4',
-      fillOpacity: 1,
-      strokeColor: '#ffffff',
-      strokeWeight: 2,
-    },
+    position: { lat, lng }, map: CamLoc.map, draggable: true, animation: google.maps.Animation.DROP,
+    icon: { path: google.maps.SymbolPath.CIRCLE, scale: 10, fillColor: PALETTE.burgundy, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
   });
-
-  CamLoc.marker.addListener('dragend', (e) => {
-    const lat = e.latLng.lat();
-    const lng = e.latLng.lng();
-    updateEditFormCoords(lat, lng);
-  });
+  CamLoc.marker.addListener('dragend', (e) => updateEditFormCoords(e.latLng.lat(), e.latLng.lng()));
 }
 
-/* ── Render all camera markers (non-draggable, labelled) ── */
 function refreshAllCamMarkers() {
   if (!CamLoc.map) return;
-
-  // Remove stale markers
   Object.values(CamLoc.allMarkers).forEach(m => m.setMap(null));
   CamLoc.allMarkers = {};
-
   CamLoc.cameras.forEach(cam => {
     if (cam.latitude == null || cam.longitude == null) return;
-    if (cam.id === CamLoc.selectedId) return; // active cam has its own draggable marker
-
+    if (cam.id === CamLoc.selectedId) return;
     const marker = new google.maps.Marker({
-      position: { lat: cam.latitude, lng: cam.longitude },
-      map:      CamLoc.map,
-      title:    `${cam.id} — ${cam.location}`,
-      icon: {
-        path:        google.maps.SymbolPath.CIRCLE,
-        scale:       8,
-        fillColor:   '#10b981',
-        fillOpacity: 0.9,
-        strokeColor: '#ffffff',
-        strokeWeight: 2,
-      },
-      label: {
-        text:      cam.id,
-        color:     '#ffffff',
-        fontSize:  '11px',
-        fontWeight: '700',
-      },
+      position: { lat: cam.latitude, lng: cam.longitude }, map: CamLoc.map,
+      title: `${cam.id} — ${cam.location}`,
+      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: PALETTE.info, fillOpacity: .9, strokeColor: '#fff', strokeWeight: 2 },
+      label: { text: cam.id, color: '#fff', fontSize: '11px', fontWeight: '700' },
     });
-
     const infoWindow = new google.maps.InfoWindow({
-      content: `
-        <div style="font-family:Inter,sans-serif;padding:4px 2px;min-width:140px">
-          <div style="font-weight:800;font-size:13px;margin-bottom:4px">${esc(cam.id)} — ${esc(cam.location)}</div>
-          <div style="font-size:11px;color:#64748b">${cam.latitude.toFixed(6)}, ${cam.longitude.toFixed(6)}</div>
-          <button onclick="selectCameraForEdit('${cam.id}')" style="margin-top:8px;padding:4px 10px;background:#06b6d4;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">Edit Location</button>
-        </div>`,
+      content: `<div style="font-family:Inter,sans-serif;padding:4px 2px;min-width:140px">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px">${esc(cam.id)} — ${esc(cam.location)}</div>
+        <div style="font-size:11px;color:#64748b">${cam.latitude.toFixed(6)}, ${cam.longitude.toFixed(6)}</div>
+        <button onclick="selectCameraForEdit('${cam.id}')" style="margin-top:8px;padding:4px 10px;background:${PALETTE.burgundy};color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:12px">Edit Location</button>
+      </div>`,
     });
-
     marker.addListener('click', () => infoWindow.open(CamLoc.map, marker));
     CamLoc.allMarkers[cam.id] = marker;
   });
 }
 
-/* ── Update hero-strip counters ── */
 function _updateCamLocStats() {
-  const cameras  = CamLoc.cameras || [];
-  const total    = cameras.length;
-  const pinned   = cameras.filter(c => c.latitude != null && c.longitude != null).length;
-  const unset    = total - pinned;
+  const cameras = CamLoc.cameras || [];
+  const total = cameras.length;
+  const pinned = cameras.filter(c => c.latitude != null && c.longitude != null).length;
+  const unset = total - pinned;
   const coverage = total > 0 ? Math.round((pinned / total) * 100) + '%' : '—';
-
   const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-  setText('cam-loc-total-count',  total  || '—');
+  setText('cam-loc-total-count', total || '—');
   setText('cam-loc-pinned-count', pinned || '0');
-  setText('cam-loc-unset-count',  unset  || '0');
-  setText('cam-loc-coverage',     coverage);
-
+  setText('cam-loc-unset-count', unset || '0');
+  setText('cam-loc-coverage', coverage);
   const badge = document.getElementById('cam-loc-badge');
   if (badge) badge.textContent = `${total} camera${total !== 1 ? 's' : ''}`;
 }
 
-/* ── Render camera list in the left panel ── */
 function renderCamLocList() {
   const el = document.getElementById('cam-loc-list');
   if (!el) return;
-
-  if (!CamLoc.cameras.length) {
-    el.innerHTML = `<div class="empty-msg" style="padding:1.5rem 1rem">No cameras registered</div>`;
-    return;
-  }
-
+  if (!CamLoc.cameras.length) { el.innerHTML = `<div class="empty-msg">No cameras registered</div>`; return; }
   el.innerHTML = CamLoc.cameras.map(cam => {
     const hasCoords = cam.latitude != null && cam.longitude != null;
-    const isActive  = cam.id === CamLoc.selectedId;
-    return `
-      <div class="cam-status-row" id="cam-loc-row-${cam.id}"
-           style="cursor:pointer;padding:.625rem .875rem;border-radius:.5rem;margin:.25rem .25rem;transition:background .15s;${isActive ? 'background:rgba(6,182,212,.12);border:1px solid rgba(6,182,212,.3)' : 'border:1px solid transparent'}"
-           onclick="selectCameraForEdit('${cam.id}')">
-        <div class="cam-status-icon" style="color:${isActive ? 'var(--cyan)' : 'var(--text-3)'}">
-          <svg viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M15 9l3.5-2v6L15 11" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
-        </div>
-        <div class="cam-info" style="flex:1">
-          <div class="cam-name">${esc(cam.id)}</div>
-          <div class="cam-loc">${esc(cam.location)}</div>
-          <div class="cam-stats" style="font-size:.72rem;margin-top:.2rem">
-            ${hasCoords
-              ? `<span style="color:var(--green)">✓ ${cam.latitude.toFixed(5)}, ${cam.longitude.toFixed(5)}</span>`
-              : `<span style="color:var(--text-3)">No coordinates set</span>`}
-          </div>
-        </div>
-        <span class="cam-badge ${hasCoords ? 'cam-badge-active' : ''}" style="${!hasCoords ? 'background:rgba(255,255,255,.06);color:var(--text-3)' : ''}">
-          ${hasCoords ? 'PLACED' : 'UNSET'}
-        </span>
-      </div>`;
+    const isActive = cam.id === CamLoc.selectedId;
+    return `<div class="cam-list-item ${isActive ? 'selected' : ''}" id="cam-loc-row-${cam.id}" onclick="selectCameraForEdit('${cam.id}')">
+      <div class="cam-status-icon"><svg viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M15 9l3.5-2v6L15 11" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
+      <div class="cam-info">
+        <div class="cam-name">${esc(cam.id)}</div>
+        <div class="cam-loc">${esc(cam.location)}</div>
+        <div class="cam-stats">${hasCoords ? `<span style="color:var(--success)">✓ ${cam.latitude.toFixed(5)}, ${cam.longitude.toFixed(5)}</span>` : `<span class="text-3">No coordinates set</span>`}</div>
+      </div>
+      <span class="cam-pin-status ${hasCoords ? 'pinned' : 'unset'}">${hasCoords ? 'Placed' : 'Unset'}</span>
+    </div>`;
   }).join('');
 }
 
-/* ── Select a camera and show the edit panel ── */
 function selectCameraForEdit(camId) {
   CamLoc.selectedId = camId;
-  renderCamLocList(); // re-render to highlight selection
-
+  renderCamLocList();
   const cam = CamLoc.cameras.find(c => c.id === camId);
   if (!cam) return;
-
-  // Show edit panel
-  const panel = document.getElementById('cam-loc-edit-panel');
-  if (panel) panel.style.display = 'block';
-
-  document.getElementById('cam-loc-edit-title').textContent = `Edit — ${cam.id}`;
+  document.getElementById('cam-loc-edit-panel').style.display = 'block';
+  document.getElementById('cam-loc-edit-title').innerHTML = `<svg viewBox="0 0 20 20" fill="none" style="width:16px;height:16px"><path d="M14.5 2.5l3 3-10 10H4.5v-3l10-10z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg> Edit — ${esc(cam.id)}`;
   document.getElementById('cam-loc-name').value = cam.location || '';
   document.getElementById('cam-loc-lat').value  = cam.latitude  != null ? cam.latitude  : '';
   document.getElementById('cam-loc-lng').value  = cam.longitude != null ? cam.longitude : '';
   document.getElementById('cam-loc-search').value = '';
   document.getElementById('cam-loc-save-status').textContent = '';
-  document.getElementById('cam-loc-save-status').style.color = '';
-
   if (!CamLoc.map) return;
-
-  // Remove previous draggable marker
   if (CamLoc.marker) { CamLoc.marker.setMap(null); CamLoc.marker = null; }
-
-  // Refresh static markers (exclude newly selected one)
   refreshAllCamMarkers();
-
   if (cam.latitude != null && cam.longitude != null) {
-    const pos = { lat: cam.latitude, lng: cam.longitude };
-    CamLoc.map.setCenter(pos);
-    CamLoc.map.setZoom(17);
+    CamLoc.map.setCenter({ lat: cam.latitude, lng: cam.longitude }); CamLoc.map.setZoom(17);
     placeDraggableMarker(cam.latitude, cam.longitude);
   } else {
-    // No coords yet — just pan to current map center for easy clicking
     toast(`Click the map to place ${cam.id}`, 'info');
   }
-
-  document.getElementById('cam-loc-map-status').textContent = cam.id + ' SELECTED';
 }
 
-/* ── Update lat/lng form inputs ── */
 function updateEditFormCoords(lat, lng) {
-  const latEl = document.getElementById('cam-loc-lat');
-  const lngEl = document.getElementById('cam-loc-lng');
+  const latEl = document.getElementById('cam-loc-lat'), lngEl = document.getElementById('cam-loc-lng');
   if (latEl) latEl.value = lat.toFixed(7);
   if (lngEl) lngEl.value = lng.toFixed(7);
 }
 
-/* ── Search button handler ── */
 function searchCameraLocation() {
   const input = document.getElementById('cam-loc-search');
   if (!input?.value.trim()) return;
-  if (!CamLoc.searchBox) {
-    toast('Maps not loaded yet', 'error');
-    return;
-  }
-  // SearchBox fires 'places_changed' automatically — but we can also
-  // trigger a Geocoder lookup as a fallback
   if (!window.google?.maps?.Geocoder) return;
   const geocoder = new google.maps.Geocoder();
   geocoder.geocode({ address: input.value.trim() }, (results, status) => {
-    if (status !== 'OK' || !results?.length) {
-      toast('Location not found — try a different search', 'error');
-      return;
-    }
+    if (status !== 'OK' || !results?.length) { toast('Location not found — try a different search', 'error'); return; }
     const loc = results[0].geometry.location;
-    const lat = loc.lat();
-    const lng = loc.lng();
-    CamLoc.map.setCenter({ lat, lng });
-    CamLoc.map.setZoom(17);
-    placeDraggableMarker(lat, lng);
-    updateEditFormCoords(lat, lng);
+    CamLoc.map.setCenter(loc); CamLoc.map.setZoom(17);
+    placeDraggableMarker(loc.lat(), loc.lng()); updateEditFormCoords(loc.lat(), loc.lng());
     const nameInput = document.getElementById('cam-loc-name');
-    if (nameInput && !nameInput.value.trim()) {
-      nameInput.value = results[0].formatted_address.split(',')[0];
-    }
+    if (nameInput && !nameInput.value.trim()) nameInput.value = results[0].formatted_address.split(',')[0];
   });
 }
 
-/* ── Save the location to backend ── */
 async function saveCameraLocation() {
   const statusEl = document.getElementById('cam-loc-save-status');
-  if (!CamLoc.selectedId) {
-    toast('No camera selected', 'error');
-    return;
-  }
-
+  if (!CamLoc.selectedId) { toast('No camera selected', 'error'); return; }
   const latVal  = parseFloat(document.getElementById('cam-loc-lat').value);
   const lngVal  = parseFloat(document.getElementById('cam-loc-lng').value);
   const nameVal = document.getElementById('cam-loc-name').value.trim();
-
-  // Validation
-  if (isNaN(latVal) || latVal < -90  || latVal > 90) {
-    statusEl.textContent = 'Latitude must be between -90 and 90';
-    statusEl.className   = 'status-inline err';
-    return;
-  }
-  if (isNaN(lngVal) || lngVal < -180 || lngVal > 180) {
-    statusEl.textContent = 'Longitude must be between -180 and 180';
-    statusEl.className   = 'status-inline err';
-    return;
-  }
-
-  statusEl.textContent = 'Saving…';
-  statusEl.className   = 'status-inline';
-
+  if (isNaN(latVal) || latVal < -90 || latVal > 90) { statusEl.textContent = 'Latitude must be between -90 and 90'; statusEl.className = 'status-inline err'; return; }
+  if (isNaN(lngVal) || lngVal < -180 || lngVal > 180) { statusEl.textContent = 'Longitude must be between -180 and 180'; statusEl.className = 'status-inline err'; return; }
+  statusEl.textContent = 'Saving…'; statusEl.className = 'status-inline';
   try {
-    const updated = await API.cameras.updateLocation(CamLoc.selectedId, {
-      latitude:  latVal,
-      longitude: lngVal,
-      location:  nameVal || undefined,
-    });
-
-    // Update local cache
+    const updated = await API.cameras.updateLocation(CamLoc.selectedId, { latitude: latVal, longitude: lngVal, location: nameVal || undefined });
     const idx = CamLoc.cameras.findIndex(c => c.id === CamLoc.selectedId);
     if (idx !== -1) CamLoc.cameras[idx] = { ...CamLoc.cameras[idx], ...updated };
-
-    // Also keep State.cameras in sync
     const si = (State.cameras || []).findIndex(c => c.id === CamLoc.selectedId);
     if (si !== -1) State.cameras[si] = { ...State.cameras[si], ...updated };
-
-    renderCamLocList();
-    refreshAllCamMarkers();
-    _updateCamLocStats();
-    statusEl.textContent = '✓ Location saved';
-    statusEl.style.color = 'var(--green)';
+    renderCamLocList(); refreshAllCamMarkers(); _updateCamLocStats();
+    statusEl.textContent = '✓ Location saved'; statusEl.style.color = 'var(--success)';
     toast(`${CamLoc.selectedId} location saved`, 'success');
   } catch (e) {
-    statusEl.textContent = 'Error: ' + e.message;
-    statusEl.className   = 'status-inline err';
+    statusEl.textContent = 'Error: ' + e.message; statusEl.className = 'status-inline err';
     toast('Failed to save: ' + e.message, 'error');
   }
 }
 
-/* ── Cancel / clear edit ── */
 function clearCameraLocationEdit() {
   CamLoc.selectedId = null;
   if (CamLoc.marker) { CamLoc.marker.setMap(null); CamLoc.marker = null; }
   document.getElementById('cam-loc-edit-panel').style.display = 'none';
-  document.getElementById('cam-loc-map-status').textContent = 'READY';
-  renderCamLocList();
-  refreshAllCamMarkers();
+  renderCamLocList(); refreshAllCamMarkers();
 }
